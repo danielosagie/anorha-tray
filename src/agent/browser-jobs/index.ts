@@ -29,8 +29,19 @@ export {
   readBrowserJobsConfig,
   bootstrapConfig,
   isConfigured,
+  hasDeviceCredential,
   type BrowserJobsConfig,
 } from "./config.js";
+export {
+  loadDeviceCredential,
+  saveDeviceCredential,
+  clearDeviceCredential,
+  generateDeviceToken,
+  registerDevice,
+  deviceFilePath,
+  type DeviceCredential,
+  type RegisterDeviceInput,
+} from "./device.js";
 
 export interface StartOptions {
   config?: BrowserJobsConfig;

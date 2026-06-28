@@ -78,6 +78,7 @@ export class BrowserJobsConsumer {
   // blocks until an explicit reset — see processJob's breaker gate).
   private cappedDeferPending = false;
   private deferRecheckTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(config: BrowserJobsConfig, executor: JobExecutor, events?: ConsumerEvents) {
     this.config = config;
@@ -85,10 +86,23 @@ export class BrowserJobsConsumer {
     this.log = events?.log ?? ((msg) => console.log(`[browser-jobs] ${msg}`));
   }
 
+  /** True once this computer is LINKED (has a device credential) — use the
+   *  secure browserJobs:claimJobs/claim* + deviceHeartbeat path. */
+  private get useDevice(): boolean {
+    return Boolean(this.config.deviceId && this.config.deviceSecret);
+  }
+
+  private deviceArgs(): { deviceId: string; deviceSecret: string } {
+    return {
+      deviceId: this.config.deviceId as string,
+      deviceSecret: this.config.deviceSecret as string,
+    };
+  }
+
   start(): void {
-    if (!this.config.convexURL || !this.config.userId) {
+    if (!this.config.convexURL || !(this.config.userId || this.useDevice)) {
       throw new Error(
-        "browser-jobs consumer not configured: need convexURL + userId (env or bootstrap).",
+        "browser-jobs consumer not configured: need convexURL + (device credential or userId).",
       );
     }
     if (this.unsubscribe) return; // already started
@@ -101,12 +115,15 @@ export class BrowserJobsConsumer {
 
     this.client = new ConvexClient(this.config.convexURL);
     this.running = true;
+    const idLabel = this.useDevice
+      ? `device=${this.config.deviceId}`
+      : `user=${this.config.userId} worker=${this.config.workerId}`;
     this.log(
-      `subscribed to browserJobs for user=${this.config.userId} worker=${this.config.workerId} via ${this.config.convexURL}`,
+      `subscribed to browserJobs (${this.useDevice ? "device-auth" : "legacy"}) ${idLabel} via ${this.config.convexURL}`,
     );
     this.unsubscribe = this.client.onUpdate(
-      "browserJobs:getRetryable",
-      { userId: this.config.userId },
+      this.useDevice ? "browserJobs:claimJobs" : "browserJobs:getRetryable",
+      this.useDevice ? this.deviceArgs() : { userId: this.config.userId },
       (jobs: BrowserJob[]) => {
         void this.handleJobs(Array.isArray(jobs) ? jobs : []);
       },
@@ -115,6 +132,7 @@ export class BrowserJobsConsumer {
         this.log(`subscription error: ${this.lastError}`);
       },
     );
+    this.startHeartbeat();
   }
 
   stop(): void {
@@ -122,6 +140,7 @@ export class BrowserJobsConsumer {
       this.unsubscribe();
       this.unsubscribe = null;
     }
+    this.stopHeartbeat();
     this.stopDeferRecheck();
     try {
       this.client?.close?.();
@@ -142,6 +161,8 @@ export class BrowserJobsConsumer {
       convexURL: this.config.convexURL,
       userId: this.config.userId,
       workerId: this.config.workerId,
+      deviceId: this.config.deviceId,
+      authMode: this.useDevice ? "device" : "legacy",
       pendingCount: this.pendingCount,
       inFlight: this.inFlight.size,
       backendSyncConfigured: Boolean(this.config.syncBaseURL && this.config.syncToken),
@@ -221,9 +242,10 @@ export class BrowserJobsConsumer {
       this.cappedDeferPending = false;
     }
     try {
-      const jobs = (await this.client.query("browserJobs:getRetryable", {
-        userId: this.config.userId,
-      })) as BrowserJob[] | null;
+      const jobs = (await this.client.query(
+        this.useDevice ? "browserJobs:claimJobs" : "browserJobs:getRetryable",
+        this.useDevice ? this.deviceArgs() : { userId: this.config.userId },
+      )) as BrowserJob[] | null;
       await this.handleJobs(Array.isArray(jobs) ? jobs : []);
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error);
@@ -253,6 +275,102 @@ export class BrowserJobsConsumer {
           "Open Facebook and check your account manually, then reset " +
           "(restart the consumer, run the reset, or set PONDER_FRICTION_BREAKER_RESET=1).",
       );
+    }
+  }
+
+  // ── workerPresence heartbeat (device mode only) ──────────────────────────
+  // Writes a presence doc every ~25s so the phone + tray derive "computer
+  // online". Device-auth only (legacy has no orgId to write presence with).
+  private startHeartbeat(): void {
+    if (!this.useDevice || this.heartbeatTimer) return;
+    const tick = () => {
+      if (!this.client) return;
+      void this.client
+        .mutation("workerPresence:deviceHeartbeat", {
+          ...this.deviceArgs(),
+          lastSeenAt: Date.now(),
+        })
+        .catch((e: unknown) => {
+          this.lastError = e instanceof Error ? e.message : String(e);
+        });
+    };
+    tick();
+    this.heartbeatTimer = setInterval(tick, 25_000);
+    (this.heartbeatTimer as { unref?: () => void })?.unref?.();
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  // ── claim vs legacy queue writes ─────────────────────────────────────────
+  // Device mode → secure claim* (verifies the device secret + job ownership).
+  // Legacy mode → the old userId/workerId-arg fns (gated server-side by
+  // BROWSER_JOBS_REQUIRE_DEVICE so they can be turned off post-cutover).
+  private async markStart(jobId: string): Promise<void> {
+    if (this.useDevice) {
+      await this.client.mutation("browserJobs:claimStart", {
+        jobId,
+        ...this.deviceArgs(),
+        workerType: this.workerType,
+      });
+    } else {
+      await this.client.mutation("browserJobs:startJob", {
+        jobId,
+        workerId: this.config.workerId,
+        workerType: this.workerType,
+      });
+    }
+  }
+
+  private async markComplete(
+    jobId: string,
+    outcome: BrowserJobExecutionResult,
+  ): Promise<void> {
+    if (this.useDevice) {
+      await this.client.mutation("browserJobs:claimComplete", {
+        jobId,
+        ...this.deviceArgs(),
+        result: outcome.result || {},
+        artifacts: outcome.artifacts || [],
+        requiresHuman: outcome.requiresHuman === true,
+      });
+    } else {
+      await this.client.mutation("browserJobs:completeJob", {
+        jobId,
+        result: outcome.result || {},
+        artifacts: outcome.artifacts || [],
+        requiresHuman: outcome.requiresHuman === true,
+        workerId: this.config.workerId,
+      });
+    }
+  }
+
+  private async markFail(
+    jobId: string,
+    errorMessage: string,
+    requiresHuman: boolean,
+    artifacts: unknown[],
+  ): Promise<void> {
+    if (this.useDevice) {
+      await this.client.mutation("browserJobs:claimFail", {
+        jobId,
+        ...this.deviceArgs(),
+        errorMessage,
+        requiresHuman,
+        artifacts,
+      });
+    } else {
+      await this.client.mutation("browserJobs:failJob", {
+        jobId,
+        errorMessage,
+        requiresHuman,
+        artifacts,
+        workerId: this.config.workerId,
+      });
     }
   }
 
@@ -349,11 +467,7 @@ export class BrowserJobsConsumer {
     this.log(`claim ${job._id} type=${job.type} platform=${job.platform}`);
     let didAttemptExecute = false;
     try {
-      await this.client.mutation("browserJobs:startJob", {
-        jobId: job._id,
-        workerId: this.config.workerId,
-        workerType: this.workerType,
-      });
+      await this.markStart(job._id);
 
       didAttemptExecute = true;
       const outcome = await this.executor.execute(job);
@@ -376,13 +490,7 @@ export class BrowserJobsConsumer {
         });
       }
 
-      await this.client.mutation("browserJobs:completeJob", {
-        jobId: job._id,
-        result: outcome.result || {},
-        artifacts: outcome.artifacts || [],
-        requiresHuman: outcome.requiresHuman === true,
-        workerId: this.config.workerId,
-      });
+      await this.markComplete(job._id, outcome);
       this.log(`done ${job._id}`);
 
       // Feature C on a CLEAN success: FB friction can ride a nominally-ok
@@ -449,13 +557,7 @@ export class BrowserJobsConsumer {
       // Still report THIS job's real failure (the breaker only blocks FUTURE
       // writes). didAttemptExecute is informational for the count decision above.
       void didAttemptExecute;
-      await this.client.mutation("browserJobs:failJob", {
-        jobId: job._id,
-        errorMessage: message,
-        requiresHuman,
-        artifacts,
-        workerId: this.config.workerId,
-      });
+      await this.markFail(job._id, message, requiresHuman, artifacts as unknown[]);
       await this.reconcileWithBackend(job);
     }
   }

@@ -15,12 +15,18 @@
  */
 
 import * as os from "node:os";
+import { loadDeviceCredential } from "./device.js";
 
 export interface BrowserJobsConfig {
   /** Convex deployment URL the sssync-bknd writes browserJobs into. */
   convexURL: string;
-  /** The owning user id (Convex jobs are filtered by_user_status). */
+  /** The owning user id (Convex jobs are filtered by_user_status). LEGACY path. */
   userId: string;
+  /** Device credential (secure path). When both are set the consumer uses
+   *  browserJobs:claimJobs/claim* + workerPresence:deviceHeartbeat instead of
+   *  the legacy userId-arg functions. Loaded from ~/.ponder/device.json. */
+  deviceId?: string;
+  deviceSecret?: string;
   /** Stable id for THIS worker (shows up on claimed jobs). */
   workerId: string;
   /** sssync-bknd base URL for the reconcile callback (optional). */
@@ -109,7 +115,7 @@ export function defaultWorkerId(): string {
 
 /** Read whatever is available from the environment (no network). */
 export function readBrowserJobsConfig(): BrowserJobsConfig {
-  return {
+  const config: BrowserJobsConfig = {
     convexURL: envStr("PONDER_BROWSER_JOBS_CONVEX_URL", "CONVEX_URL"),
     userId: envStr("PONDER_BROWSER_JOBS_USER_ID"),
     workerId: envStr("PONDER_BROWSER_JOBS_WORKER_ID") || defaultWorkerId(),
@@ -148,10 +154,26 @@ export function readBrowserJobsConfig(): BrowserJobsConfig {
     // Cap-defer re-check tick: 60s default; 0 disables. Clamped non-negative.
     deferRecheckMs: envNum("PONDER_DEFER_RECHECK_MS", 60000),
   };
+
+  // Secure device-credential overlay: once this computer is LINKED, prefer the
+  // device cred (and the convexURL it was linked to) over the legacy env userId.
+  const dev = loadDeviceCredential();
+  if (dev) {
+    config.deviceId = dev.deviceId;
+    config.deviceSecret = dev.deviceSecret;
+    if (!config.convexURL) config.convexURL = dev.convexURL;
+  }
+  return config;
+}
+
+export function hasDeviceCredential(config: BrowserJobsConfig): boolean {
+  return Boolean(config.deviceId && config.deviceSecret);
 }
 
 export function isConfigured(config: BrowserJobsConfig): boolean {
-  return Boolean(config.convexURL && config.userId);
+  // Either the secure device path (convexURL + device cred) or the legacy
+  // path (convexURL + userId) counts as configured.
+  return Boolean(config.convexURL && (config.userId || hasDeviceCredential(config)));
 }
 
 /**
