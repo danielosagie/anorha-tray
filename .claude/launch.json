@@ -6,6 +6,12 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "5577", "--directory", ".tray-preview"],
       "port": 5577
+    },
+    {
+      "name": "ponder-preview",
+      "runtimeExecutable": "node_modules/.bin/vite",
+      "runtimeArgs": ["--config", "vite.preview.config.ts"],
+      "port": 5199
     }
   ]
 }
