@@ -30,7 +30,6 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          overlay: resolve(__dirname, "src/renderer/overlay/index.html"),
           app: resolve(__dirname, "src/renderer/app/index.html"),
           buddy: resolve(__dirname, "src/renderer/buddy/index.html"),
         },

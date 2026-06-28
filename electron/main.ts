@@ -2921,12 +2921,6 @@ function setupIpc(): void {
     return { ok: true };
   });
 
-  // Legacy stubs — older renderer code (App.tsx welcome card) might still
-  // call these. Return ok:false so callers can no-op gracefully.
-  ipcMain.handle("overlay:hide", () => ({ ok: true }));
-  ipcMain.handle("overlay:setMode", () => ({ ok: true }));
-  ipcMain.handle("overlay:resize", () => ({ ok: true }));
-
   ipcMain.handle("app:show", () => {
     if (!appWin || appWin.isDestroyed()) appWin = createAppWindow();
     appWin.show();

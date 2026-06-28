@@ -7,11 +7,6 @@ const api = {
   cancel: () => ipcRenderer.invoke("agent:cancel"),
   warm: () => ipcRenderer.invoke("agent:warm"),
   getState: () => ipcRenderer.invoke("agent:state"),
-  hideOverlay: () => ipcRenderer.invoke("overlay:hide"),
-  setOverlayMode: (mode: "input" | "tail") =>
-    ipcRenderer.invoke("overlay:setMode", mode),
-  resizeOverlay: (size: { w: number; h: number }) =>
-    ipcRenderer.invoke("overlay:resize", size),
   // Buddy input pill — renderer asks main to drop input mode (re-enable
   // click-through, hide pill, blur the window).
   dismissInputMode: () => ipcRenderer.invoke("buddy:dismissInput"),
