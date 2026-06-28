@@ -15,7 +15,6 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
-import { useTaskHistory } from "../shared/taskHistory";
 
 type ProviderName = "remote" | "local" | "hcompany";
 type AgentState = {
@@ -80,6 +79,11 @@ export function App() {
   const [view, setView] = useState<View>("run");
   const [onboarded, setOnboarded] = useState(() => localStorage.getItem("anorha_onboarded") === "1");
   const [toast, setToast] = useState("");
+  // Device link state: null = checking, then the device:status result. Gates the
+  // whole app — an unlinked computer sees the Clerk sign-in / link screen.
+  const [link, setLink] = useState<
+    { linked: boolean; deviceId?: string; name?: string; orgId?: string } | null
+  >(null);
   const mainScrollRef = useRef<HTMLDivElement>(null);
 
   // The main pane is one persistent scroll container, so its scrollTop survives
@@ -92,6 +96,12 @@ export function App() {
     void window.agent.getState().then((s: AgentState) => mounted && setAgentState(s));
     const unsub = window.agent.onState((s: AgentState) => mounted && setAgentState(s));
     return () => { mounted = false; unsub(); };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    void window.agent.getDeviceStatus().then((s) => mounted && setLink(s));
+    return () => { mounted = false; };
   }, []);
 
   useEffect(() => {
@@ -159,12 +169,6 @@ export function App() {
     });
   };
 
-  const saveAutomation = async () => {
-    const res = await window.agent.saveLastAsRecipe(pendingTask);
-    if (res.ok) { flashToast("Saved as automation"); void refreshRecipes(); }
-    else flashToast(res.error ?? "couldn't save");
-  };
-
   if (!onboarded) {
     return (
       <div className="anorha-root">
@@ -173,6 +177,21 @@ export function App() {
           <Onboarding onDone={() => { localStorage.setItem("anorha_onboarded", "1"); setOnboarded(true); }} />
         </div>
       </div>
+    );
+  }
+
+  // Link gate: an unlinked computer can't do anything useful, so it shows the
+  // sign-in / link screen instead of the tray feed (mirrors the onboarded gate).
+  if (link === null) {
+    return (
+      <div className="anorha-root"><PanelStyles /><div className="panel"><div className="gate-load">Checking this computer…</div></div></div>
+    );
+  }
+  if (!link.linked) {
+    return (
+      <div className="anorha-root"><PanelStyles /><div className="panel">
+        <LinkGate onLinked={(s) => setLink(s)} />
+      </div></div>
     );
   }
 
@@ -224,16 +243,17 @@ export function App() {
               <Automations recipes={recipes} onReplay={replay} onRefresh={refreshRecipes} />
             ) : permsMissing ? (
               <div className="page"><Connect perms={perms} /></div>
-            ) : working ? (
-              <div className="page"><Working sessionId={(agentState?.activeSessionId ?? null) as Id<"sessions"> | null} live={liveLine} task={replaying ?? pendingTask} /></div>
             ) : (
-              <RunIdle
-                answer={answer}
-                warmupHint={warmup === "warming" ? `Warming up ${PROVIDER_LABELS[provider]}…` : ""}
-                canSave={!!answer && !!pendingTask && !replaying}
-                onRun={run}
-                onSave={saveAutomation}
-              />
+              <div className="page">
+                <TrayFeed
+                  deviceName={link.name}
+                  working={working}
+                  live={liveLine}
+                  task={replaying ?? pendingTask}
+                  answer={answer}
+                  onOpenSettings={() => setView("settings")}
+                />
+              </div>
             )}
           </div>
         </main>
@@ -244,100 +264,101 @@ export function App() {
   );
 }
 
-// ── Run / Idle ───────────────────────────────────────────────────────────────
-function RunIdle({
-  answer, warmupHint, canSave, onRun, onSave,
-}: {
-  answer: string; warmupHint: string; canSave: boolean;
-  onRun: (t: string) => void; onSave: () => void;
-}) {
-  const [text, setText] = useState("");
-  const history = useTaskHistory();
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => { inputRef.current?.focus(); }, []);
-  const fire = () => { const v = text.trim(); if (!v) return; history.push(v); onRun(v); setText(""); };
-
-  const examples = [
-    "List my Facebook Marketplace items in a Google Sheet",
-    "Cross-post my newest listing to eBay",
-    "Check Marketplace messages and summarize offers",
-  ];
-
-  // After a run completes, show the result in a clean page (not the hero).
-  if (answer) {
-    const tbl = parseTable(answer);
-    return (
-      <div className="page">
-        <div className="page-h">Result</div>
-        <div className={tbl ? "answer-table" : "answer"}>
-          {tbl ? <DataTable table={tbl} /> : answer}
-          {canSave && <button className="save-auto" onClick={onSave}>Save as automation</button>}
-        </div>
-      </div>
-    );
+// ── Tray feed (Version B "Activity Feed") ────────────────────────────────────
+// The clean tray home: a calm now-strip (Ready, or the live job when running)
+// over a color-coded feed of recent runs. The tray REPORTS — there is no
+// "what do you want done" composer; commands arrive from the account.
+function feedOutcome(status: SessionRow["status"]): string {
+  switch (status) {
+    case "done": return "Done";
+    case "error": return "Couldn't finish";
+    case "running": return "Working";
+    case "pending": return "Queued";
+    case "cancelled": return "Stopped";
+    default: return status;
   }
-
-  return (
-    <div className="run-hero">
-      <h1 className="run-title">What do you want done?</h1>
-      <div className="composer">
-        <textarea
-          ref={inputRef}
-          value={text}
-          rows={1}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); fire(); return; } history.onKeyDown(e, text, setText); }}
-          placeholder="Describe a task — Anorha drives your Mac + Chrome to do it…"
-        />
-        <div className="composer-bar">
-          <span className="comp-hint">{warmupHint || "Press Enter to run · Shift+Enter for a new line"}</span>
-          <span className="grow" />
-          <button className="comp-send" onClick={fire} aria-label="Run" disabled={!text.trim()}>
-            <svg viewBox="0 0 24 24" fill="none"><path d="M12 19V5M6 11l6-6 6 6" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-          </button>
-        </div>
-      </div>
-      <div className="run-suggest">
-        {examples.map((ex) => (
-          <button key={ex} className="suggest-chip" onClick={() => onRun(ex)}>
-            <svg viewBox="0 0 24 24" fill="none" className="sc-ic"><path d="M8 5v14l11-7z" fill="currentColor" /></svg>
-            {ex}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
 }
 
-// ── Working ──────────────────────────────────────────────────────────────────
-function Working({ sessionId, live, task }: { sessionId: Id<"sessions"> | null; live: string; task: string }) {
-  const steps = useQuery(api.steps.listBySession, sessionId ? { sessionId } : "skip") as
-    | Array<{ _id: string; kind: string; text?: string; index: number }> | undefined;
-  const session = useQuery(api.sessions.get, sessionId ? { sessionId } : "skip") as { prompt: string } | null | undefined;
-  const newest = steps && steps.length ? steps[steps.length - 1] : undefined;
-  const now = live || (newest ? newest.text ?? newest.kind : "Looking at the page…");
-  const sub = task || session?.prompt || "";
-  const count = steps?.length ?? 0;
+function TrayFeed({
+  deviceName, working, live, task, answer, onOpenSettings,
+}: {
+  deviceName?: string; working: boolean; live: string; task: string; answer: string;
+  onOpenSettings: () => void;
+}) {
+  const sessions = useQuery(api.sessions.list, { limit: 50 }) as SessionRow[] | undefined;
   return (
     <>
-      <div className="live">
-        <span className="spinner" />
-        <div className="live-main">
-          <div className="now">{now}</div>
-          {sub && <div className="sub">{sub}</div>}
-        </div>
-        <button className="stop" onClick={() => void window.agent.cancel()} title="Stop">
-          <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor" /></svg>
+      <div className="feed-top">
+        <span className="feed-title">Activity</span>
+        <span className="grow" />
+        <button className="devpill" onClick={onOpenSettings} title="This computer">
+          <span className="dot ready" />
+          {deviceName || "This computer"}
         </button>
       </div>
-      <div className="pmeta">{count > 0 ? `step ${count}` : "starting…"}</div>
-      {(steps ?? []).slice(-8).reverse().map((s) => (
-        <div className="logline" key={s._id}>
-          <span className={`lk ${s.kind}`}>{s.kind}</span>
-          <span className="lt">{s.text ?? s.kind}</span>
+
+      {working ? (
+        <div className="live">
+          <span className="spinner" />
+          <div className="live-main">
+            <div className="now">{live || "Working…"}</div>
+            {task && <div className="sub">{task}</div>}
+          </div>
+          <button className="stop" onClick={() => void window.agent.cancel()} title="Stop">
+            <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor" /></svg>
+          </button>
+        </div>
+      ) : (
+        <div className="ready-strip">
+          <span className="dot ready" />
+          <span className="rs-main">Ready</span>
+          <span className="rs-sub">· Waiting for a command</span>
+        </div>
+      )}
+
+      {!working && answer && <div className="feed-answer">{answer}</div>}
+
+      <div className="sect">Recent</div>
+      {sessions === undefined && <div className="muted-row">Loading…</div>}
+      {sessions !== undefined && sessions.length === 0 && (
+        <div className="empty">Nothing yet. Commands you send from the app run here.</div>
+      )}
+      {(sessions ?? []).map((s) => (
+        <div className="frow" key={s._id}>
+          <span className={`fdot ${s.status}`} />
+          <div className="frow-main">
+            <div className="ttl">{s.prompt}</div>
+            <div className="meta">{feedOutcome(s.status)} · {relTime(s.createdAt)}</div>
+          </div>
         </div>
       ))}
     </>
+  );
+}
+
+// ── Link gate (unlinked computer → sign in) ──────────────────────────────────
+// STEP C wires real Clerk OAuth here: the button opens the system browser,
+// obtains a session token (getToken(), no template), then calls
+// window.agent.registerDevice({ clerkToken, name }) and onLinked(status).
+function LinkGate({
+  onLinked,
+}: {
+  onLinked: (s: { linked: boolean; deviceId?: string; name?: string; orgId?: string }) => void;
+}) {
+  void onLinked; // wired once Clerk sign-in lands (STEP C)
+  return (
+    <div className="onb">
+      <span className="mark big" aria-hidden>
+        <svg viewBox="0 0 24 24" fill="none">
+          <path d="M5 19c0-7 6-13 14-13 0 8-6 13-14 13z" fill="#fff" />
+          <path d="M5 19c3-5 7-8 11-9" stroke="#3B6D11" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+      </span>
+      <h2>Link this computer</h2>
+      <p>Sign in to connect this Mac to your account. It then runs the commands you send.</p>
+      <button className="cta" disabled>Sign in</button>
+      <div className="gate-note">Sign-in lands in the next build.</div>
+    </div>
   );
 }
 
@@ -981,6 +1002,25 @@ function PanelStyles() {
       .cta-row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
       .ghost { flex: 1; height: 34px; border: 1px solid rgba(15,17,22,.12); background: var(--bg2); color: var(--soft); border-radius: 10px; font-size: 12px; cursor: pointer; }
       .fine { font-size: 11px; color: var(--muted2); margin-top: 10px; }
+      /* Tray feed (Version B "Activity Feed") */
+      .feed-top { display: flex; align-items: center; padding: 2px 4px 10px; }
+      .feed-title { font-size: 14.5px; font-weight: 600; color: var(--ink); letter-spacing: -.01em; }
+      .devpill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 999px; background: rgba(15,17,22,.04); border: 1px solid rgba(15,17,22,.08); color: var(--soft); font-size: 12.5px; font-weight: 500; cursor: pointer; }
+      .devpill:hover { background: rgba(15,17,22,.07); }
+      .ready-strip { display: flex; align-items: center; gap: 9px; padding: 12px 13px; border-radius: 14px; background: rgba(15,17,22,.03); border: 1px solid rgba(15,17,22,.08); }
+      .ready-strip .rs-main { font-size: 14px; font-weight: 600; color: var(--ink); }
+      .ready-strip .rs-sub { font-size: 12.5px; color: var(--muted); }
+      .feed-answer { margin: 10px 2px 2px; padding: 11px 13px; border-radius: 12px; font-size: 13px; line-height: 1.5; color: var(--ink); white-space: pre-wrap; background: rgba(43,182,115,.08); border: 1px solid rgba(43,182,115,.25); }
+      .frow { display: flex; align-items: center; gap: 11px; padding: 9px 8px; border-radius: 11px; }
+      .frow:hover { background: rgba(15,17,22,.035); }
+      .frow-main { flex: 1; min-width: 0; }
+      .fdot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--muted2); }
+      .fdot.done { background: var(--good); }
+      .fdot.error { background: var(--bad); }
+      .fdot.running, .fdot.pending { background: var(--olive); }
+      .fdot.cancelled { background: var(--muted2); }
+      .gate-load { display: flex; align-items: center; justify-content: center; min-height: 60vh; color: var(--muted); font-size: 13px; }
+      .gate-note { font-size: 11px; color: var(--muted2); margin-top: 10px; text-align: center; }
       .onb { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; }
       .onb h2 { font-size: 19px; font-weight: 600; color: var(--ink); margin: 0; } .onb p { font-size: 13px; color: var(--muted); line-height: 1.55; margin: 10px 0 0; max-width: 300px; }
       .dots { display: flex; gap: 6px; margin: 20px 0 4px; } .dots span { width: 6px; height: 6px; border-radius: 50%; background: rgba(15,17,22,.15); } .dots span.on { background: var(--olive); width: 18px; border-radius: 3px; }
