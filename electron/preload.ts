@@ -53,7 +53,25 @@ const api = {
       convexUrl: string | null;
       provider: ProviderName;
       backgroundMode: boolean;
+      clerkPublishableKey: string | null;
+      apiBaseUrl: string | null;
     }>,
+  // ── Device linking (Phase 1) ──
+  getDeviceStatus: () =>
+    ipcRenderer.invoke("device:status") as Promise<{
+      linked: boolean;
+      deviceId?: string;
+      name?: string;
+      orgId?: string;
+    }>,
+  registerDevice: (args: { clerkToken: string; name: string; platform?: string }) =>
+    ipcRenderer.invoke("device:register", args) as Promise<{
+      ok: boolean;
+      deviceId?: string;
+      error?: string;
+    }>,
+  unlinkDevice: () =>
+    ipcRenderer.invoke("device:unlink") as Promise<{ ok: boolean }>,
   // ── Automations / recipes — list, fetch, reveal in editor.
   //    All data comes from ~/.ponder/recipes/. The renderer's
   //    Automations tab uses listRecipes for the index, getRecipe

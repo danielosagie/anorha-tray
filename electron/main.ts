@@ -37,6 +37,13 @@ import { createOllamaNarrator } from "../src/agent/narrator";
 import { createExtractor } from "../src/agent/extractor";
 import { extractRows } from "../src/agent/extract";
 import { scrollToLoadAll } from "../src/agent/scroll-load";
+import {
+  loadDeviceCredential,
+  clearDeviceCredential,
+  startBrowserJobsConsumer,
+  registerDevice as registerBrowserJobsDevice,
+  type BrowserJobsConsumer,
+} from "../src/agent/browser-jobs/index";
 import type { RouterClient } from "../src/agent/router";
 import type { AgentEvents, ProviderName } from "../src/agent/types";
 import type { BrowserClient, BrowserSnapshot } from "../src/agent/browser/types";
@@ -2958,7 +2965,79 @@ function setupIpc(): void {
     convexUrl: convexUrl ?? null,
     provider: executorNameFor(providerName),
     backgroundMode: BACKGROUND_MODE,
+    // Surfaced for the renderer's Clerk sign-in (onboarding) + org lookup.
+    clerkPublishableKey: process.env.CLERK_PUBLISHABLE_KEY ?? null,
+    apiBaseUrl: process.env.PONDER_API_BASE_URL ?? null,
   }));
+
+  // ── Device linking (Phase 1) — Clerk sign-in mints a per-device secret. ──
+  // device:status is read-only (no auth). device:register takes a fresh Clerk
+  // session token from the renderer, resolves the active org the same way the
+  // mobile app does, registers the device on the queue's Convex deployment,
+  // persists ~/.ponder/device.json, and starts the consumer. device:unlink
+  // stops the consumer and drops the local credential.
+  ipcMain.handle("device:status", () => {
+    const c = loadDeviceCredential();
+    return {
+      linked: Boolean(c),
+      deviceId: c?.deviceId,
+      name: c?.name,
+      orgId: c?.orgId,
+    };
+  });
+
+  ipcMain.handle(
+    "device:register",
+    async (
+      _e,
+      args: { clerkToken: string; name: string; platform?: string },
+    ) => {
+      try {
+        const convexURL = process.env.VITE_CONVEX_URL || convexUrl || "";
+        if (!convexURL) return { ok: false, error: "no Convex URL configured" };
+        const apiBase = (process.env.PONDER_API_BASE_URL || "").replace(/\/+$/, "");
+        if (!apiBase) return { ok: false, error: "no API base configured" };
+        // Resolve the account's active org (same endpoint the mobile app uses;
+        // returns { orgId }). registerDevice requires an explicit orgId.
+        const orgRes = await fetch(`${apiBase}/api/organizations/me/active`, {
+          headers: { Authorization: `Bearer ${args.clerkToken}` },
+        });
+        if (!orgRes.ok) return { ok: false, error: `org lookup failed (${orgRes.status})` };
+        const orgJson = (await orgRes.json()) as { orgId?: string };
+        const orgId = String(orgJson?.orgId || "").trim();
+        if (!orgId) return { ok: false, error: "no active org for this account" };
+        const cred = await registerBrowserJobsDevice({
+          convexURL,
+          clerkToken: args.clerkToken,
+          orgId,
+          name: args.name,
+          platform: args.platform,
+        });
+        try {
+          browserJobsConsumer?.stop();
+        } catch {
+          /* ignore */
+        }
+        browserJobsConsumer = await startBrowserJobsConsumer({
+          events: { log: (m) => console.log(`[browser-jobs] ${m}`) },
+        });
+        return { ok: true, deviceId: cred.deviceId };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+  );
+
+  ipcMain.handle("device:unlink", () => {
+    try {
+      browserJobsConsumer?.stop();
+    } catch {
+      /* ignore */
+    }
+    browserJobsConsumer = null;
+    clearDeviceCredential();
+    return { ok: true };
+  });
 
   // ── Recipes (automations) — the renderer's Automations tab pulls
   //    these from disk so the user can see every saved flow without
@@ -3254,6 +3333,9 @@ function startKeepWarm(): void {
   keepWarmTimer = setInterval(pingWarmIfOpen, 240_000); // 4 min < Modal's 600s scaledown
 }
 
+// Holds the in-process browser-jobs consumer when this computer is linked.
+let browserJobsConsumer: BrowserJobsConsumer | null = null;
+
 app.whenReady().then(() => {
   // Keep dock visible during dev so the user has a visual anchor; can hide
   // later via tray menu or remove this check entirely once tray icon ships.
@@ -3262,6 +3344,19 @@ app.whenReady().then(() => {
   buildTray();
   setupIpc();
   startBridgeServer();
+
+  // Linked computer → start draining the account's queue immediately via the
+  // device-auth path (consumer auto-uses claimJobs + deviceHeartbeat once
+  // ~/.ponder/device.json exists). Unlinked machines stay idle until onboarding.
+  if (loadDeviceCredential()) {
+    void startBrowserJobsConsumer({
+      events: { log: (m) => console.log(`[browser-jobs] ${m}`) },
+    })
+      .then((c) => {
+        browserJobsConsumer = c;
+      })
+      .catch((e) => console.error("[browser-jobs] start failed:", e));
+  }
 
   // Pre-warm the brain at launch so the FIRST task hits a warm container
   // instead of paying a cold start. With Modal min_containers=0 the GPU
