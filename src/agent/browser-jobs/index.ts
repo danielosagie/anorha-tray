@@ -16,6 +16,11 @@ import { PonderExecutor } from "./ponder-executor.js";
 import { BrowserJobsConsumer, type ConsumerEvents } from "./consumer.js";
 
 export { BrowserJobsConsumer } from "./consumer.js";
+export type {
+  ConsumerEvents,
+  JobActivityEvent,
+  JobActivityStatus,
+} from "./consumer.js";
 export {
   PonderExecutor,
   goalForJob,

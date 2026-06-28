@@ -76,6 +76,8 @@ export function App() {
   const [link, setLink] = useState<
     { linked: boolean; deviceId?: string; name?: string; orgId?: string } | null
   >(null);
+  // Live dispatched-job activity (deduped by id, latest status wins) for the feed.
+  const [activity, setActivity] = useState<Activity[]>([]);
   const mainScrollRef = useRef<HTMLDivElement>(null);
 
   // The main pane is one persistent scroll container, so its scrollTop survives
@@ -94,6 +96,17 @@ export function App() {
     let mounted = true;
     void window.agent.getDeviceStatus().then((s) => mounted && setLink(s));
     return () => { mounted = false; };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    void window.agent.getRecentActivity().then((list) => {
+      if (mounted) setActivity(Array.isArray(list) ? (list as Activity[]) : []);
+    });
+    const unsub = window.agent.onActivity((e) => {
+      setActivity((prev) => [...prev.filter((x) => x.id !== e.id), e as Activity].slice(-50));
+    });
+    return () => { mounted = false; unsub(); };
   }, []);
 
   useEffect(() => {
@@ -239,7 +252,7 @@ export function App() {
                   working={working}
                   live={liveLine}
                   task={replaying ?? pendingTask}
-                  answer={answer}
+                  activity={activity}
                   onOpenSettings={() => setView("settings")}
                 />
               </div>
@@ -269,12 +282,16 @@ function feedOutcome(status: SessionRow["status"]): string {
 }
 
 function TrayFeed({
-  deviceName, working, live, task, answer, onOpenSettings,
+  deviceName, working, live, task, activity, onOpenSettings,
 }: {
-  deviceName?: string; working: boolean; live: string; task: string; answer: string;
-  onOpenSettings: () => void;
+  deviceName?: string; working: boolean; live: string; task: string;
+  activity: Activity[]; onOpenSettings: () => void;
 }) {
+  // Fallback feed (agent's local sessions) shown only before any dispatched job
+  // activity exists — once jobs flow from the queue, the live activity wins.
   const sessions = useQuery(api.sessions.list, { limit: 50 }) as SessionRow[] | undefined;
+  const runningAct = activity.find((a) => a.status === "running" || a.status === "claimed");
+  const hasActivity = activity.length > 0;
   return (
     <>
       <div className="feed-top">
@@ -286,7 +303,18 @@ function TrayFeed({
         </button>
       </div>
 
-      {working ? (
+      {runningAct ? (
+        <div className="live">
+          <span className="spinner" />
+          <div className="live-main">
+            <div className="now">{runningAct.status === "claimed" ? "Starting…" : (live || "Working…")}</div>
+            <div className="sub">{runningAct.title}</div>
+          </div>
+          <button className="stop" onClick={() => void window.agent.cancel()} title="Stop">
+            <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor" /></svg>
+          </button>
+        </div>
+      ) : working ? (
         <div className="live">
           <span className="spinner" />
           <div className="live-main">
@@ -305,24 +333,43 @@ function TrayFeed({
         </div>
       )}
 
-      {!working && answer && <div className="feed-answer">{answer}</div>}
-
       <div className="sect">Recent</div>
-      {sessions === undefined && <div className="muted-row">Loading…</div>}
-      {sessions !== undefined && sessions.length === 0 && (
-        <div className="empty">Nothing yet. Commands you send from the app run here.</div>
-      )}
-      {(sessions ?? []).map((s) => (
-        <div className="frow" key={s._id}>
-          <span className={`fdot ${s.status}`} />
-          <div className="frow-main">
-            <div className="ttl">{s.prompt}</div>
-            <div className="meta">{feedOutcome(s.status)} · {relTime(s.createdAt)}</div>
+      {hasActivity ? (
+        [...activity].reverse().filter((a) => a.id !== runningAct?.id).map((a) => (
+          <div className="frow" key={a.id}>
+            <span className={`fdot ${actDot(a.status)}`} />
+            <div className="frow-main">
+              <div className="ttl">{a.title}</div>
+              <div className="meta">{actOutcome(a.status)} · {relTime(a.ts)}{a.platform ? ` · ${a.platform.replace(/_/g, " ")}` : ""}</div>
+            </div>
+            {a.url && <a className="conn" href={a.url} target="_blank" rel="noreferrer">Open</a>}
           </div>
-        </div>
-      ))}
+        ))
+      ) : sessions === undefined ? (
+        <div className="muted-row">Loading…</div>
+      ) : sessions.length === 0 ? (
+        <div className="empty">Nothing yet. Commands you send from your phone run here.</div>
+      ) : (
+        sessions.map((s) => (
+          <div className="frow" key={s._id}>
+            <span className={`fdot ${s.status}`} />
+            <div className="frow-main">
+              <div className="ttl">{s.prompt}</div>
+              <div className="meta">{feedOutcome(s.status)} · {relTime(s.createdAt)}</div>
+            </div>
+          </div>
+        ))
+      )}
     </>
   );
+}
+
+type Activity = { id: string; title: string; platform: string; status: "claimed" | "running" | "done" | "failed"; url?: string; ts: number };
+function actDot(s: Activity["status"]): string {
+  return s === "done" ? "done" : s === "failed" ? "error" : s === "running" ? "running" : "pending";
+}
+function actOutcome(s: Activity["status"]): string {
+  return s === "done" ? "Done" : s === "failed" ? "Couldn't finish" : s === "running" ? "Running" : "Queued";
 }
 
 // ── Link gate (unlinked computer → sign in) ──────────────────────────────────

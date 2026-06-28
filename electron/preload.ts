@@ -2,6 +2,15 @@ import { contextBridge, ipcRenderer } from "electron";
 
 export type ProviderName = "remote" | "local" | "hcompany";
 
+export interface JobActivity {
+  id: string;
+  title: string;
+  platform: string;
+  status: "claimed" | "running" | "done" | "failed";
+  url?: string;
+  ts: number;
+}
+
 const api = {
   runTask: (prompt: string) => ipcRenderer.invoke("agent:run", prompt),
   cancel: () => ipcRenderer.invoke("agent:cancel"),
@@ -52,6 +61,16 @@ const api = {
     }>,
   unlinkDevice: () =>
     ipcRenderer.invoke("device:unlink") as Promise<{ ok: boolean }>,
+  // ── Tray Activity Feed (dispatched-job lifecycle) ──
+  getRecentActivity: () =>
+    ipcRenderer.invoke("activity:recent") as Promise<JobActivity[]>,
+  onActivity: (cb: (e: JobActivity) => void): (() => void) => {
+    const handler = (_e: unknown, payload: JobActivity) => cb(payload);
+    ipcRenderer.on("agent:activity", handler);
+    return () => {
+      ipcRenderer.removeListener("agent:activity", handler);
+    };
+  },
   // ── Automations / recipes — list, fetch, reveal in editor.
   //    All data comes from ~/.ponder/recipes/. The renderer's
   //    Automations tab uses listRecipes for the index, getRecipe

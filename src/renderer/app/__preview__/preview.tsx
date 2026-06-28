@@ -27,6 +27,12 @@ const sub = (_cb?: unknown) => () => {};
   listRecipes: async () => [],
   registerDevice: async () => ({ ok: true, deviceId: "dev_preview" }),
   unlinkDevice: async () => ({ ok: true }),
+  getRecentActivity: async () => ([
+    { id: "j1", title: "Vintage Levi's 501 · $48", platform: "facebook_marketplace", status: "done", url: "https://example.com/l", ts: Date.now() - 120_000 },
+    { id: "j2", title: "Nike Air Max 90 · $90", platform: "facebook_marketplace", status: "failed", ts: Date.now() - 30_000 },
+    { id: "j3", title: "Coffee table → $99", platform: "ebay", status: "running", ts: Date.now() - 5_000 },
+  ]),
+  onActivity: (_cb: unknown) => () => {},
   runTask: async () => ({ ok: true }),
   cancel: async () => ({ ok: true }),
   warm: async () => ({ ok: true }),

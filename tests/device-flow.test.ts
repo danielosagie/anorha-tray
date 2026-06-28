@@ -192,6 +192,44 @@ async function main() {
     c.stop();
   }
 
+  // ── 7. onJob structured events: claimed → running → done (+ url/title) ──
+  {
+    const m = makeMock();
+    const ev: any[] = [];
+    const c = new BrowserJobsConsumer(
+      { ...baseCfg, deviceId: "dev1", deviceSecret: "sec1" },
+      okExec,
+      { log: () => {}, onJob: (e) => ev.push(e) },
+      { createClient: () => m.client },
+    );
+    c.start();
+    m.emit([job("jo")]);
+    await waitFor(() => ev.some((e) => e.status === "done"));
+    const statuses = ev.filter((e) => e.id === "jo").map((e) => e.status);
+    check("onJob order claimed→running→done", JSON.stringify(statuses) === JSON.stringify(["claimed", "running", "done"]));
+    const done = ev.find((e) => e.status === "done");
+    check("onJob done carries url + title + platform", !!done && done.url === "u" && !!done.title && done.platform === "facebook_marketplace");
+    c.stop();
+  }
+
+  // ── 8. onJob failure: claimed → running → failed ──
+  {
+    const m = makeMock();
+    const ev: any[] = [];
+    const c = new BrowserJobsConsumer(
+      { ...baseCfg, deviceId: "dev1", deviceSecret: "sec1" },
+      failExec,
+      { log: () => {}, onJob: (e) => ev.push(e) },
+      { createClient: () => m.client },
+    );
+    c.start();
+    m.emit([job("jx")]);
+    await waitFor(() => ev.some((e) => e.status === "failed"));
+    const statuses = ev.filter((e) => e.id === "jx").map((e) => e.status);
+    check("onJob order claimed→running→failed", JSON.stringify(statuses) === JSON.stringify(["claimed", "running", "failed"]));
+    c.stop();
+  }
+
   console.log("\n" + checks.join("\n"));
   console.log(`\n${passed}/${checks.length} checks passed`);
   if (passed !== checks.length) process.exit(1);

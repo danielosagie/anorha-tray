@@ -42,6 +42,7 @@ import {
   startBrowserJobsConsumer,
   registerDevice as registerBrowserJobsDevice,
   type BrowserJobsConsumer,
+  type JobActivityEvent,
 } from "../src/agent/browser-jobs/index";
 import type { RouterClient } from "../src/agent/router";
 import type { AgentEvents, ProviderName } from "../src/agent/types";
@@ -2958,6 +2959,10 @@ function setupIpc(): void {
     };
   });
 
+  // Seed the tray Activity Feed with recent dispatched-job events (live updates
+  // then stream via agent:activity → preload onActivity).
+  ipcMain.handle("activity:recent", () => recentActivity);
+
   ipcMain.handle(
     "device:register",
     async (
@@ -2990,9 +2995,7 @@ function setupIpc(): void {
         } catch {
           /* ignore */
         }
-        browserJobsConsumer = await startBrowserJobsConsumer({
-          events: { log: (m) => console.log(`[browser-jobs] ${m}`) },
-        });
+        browserJobsConsumer = await startBrowserJobsConsumer({ events: consumerEvents() });
         return { ok: true, deviceId: cred.deviceId };
       } catch (e) {
         return { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -3318,6 +3321,22 @@ function startKeepWarm(): void {
 // Holds the in-process browser-jobs consumer when this computer is linked.
 let browserJobsConsumer: BrowserJobsConsumer | null = null;
 
+// Ring buffer of recent dispatched-job activity for the tray Activity Feed.
+// pushActivity both buffers (so a freshly-opened panel can seed via activity:recent)
+// and live-forwards to the open app window (agent:activity → preload onActivity).
+const recentActivity: JobActivityEvent[] = [];
+function pushActivity(e: JobActivityEvent): void {
+  recentActivity.push(e);
+  if (recentActivity.length > 50) recentActivity.shift();
+  if (appWin && !appWin.isDestroyed()) appWin.webContents.send("agent:activity", e);
+}
+function consumerEvents() {
+  return {
+    log: (m: string) => console.log(`[browser-jobs] ${m}`),
+    onJob: pushActivity,
+  };
+}
+
 app.whenReady().then(() => {
   // Keep dock visible during dev so the user has a visual anchor; can hide
   // later via tray menu or remove this check entirely once tray icon ships.
@@ -3331,9 +3350,7 @@ app.whenReady().then(() => {
   // device-auth path (consumer auto-uses claimJobs + deviceHeartbeat once
   // ~/.ponder/device.json exists). Unlinked machines stay idle until onboarding.
   if (loadDeviceCredential()) {
-    void startBrowserJobsConsumer({
-      events: { log: (m) => console.log(`[browser-jobs] ${m}`) },
-    })
+    void startBrowserJobsConsumer({ events: consumerEvents() })
       .then((c) => {
         browserJobsConsumer = c;
       })

@@ -29,8 +29,20 @@ export interface JobExecutor {
   execute(job: BrowserJob): Promise<BrowserJobExecutionResult>;
 }
 
+export type JobActivityStatus = "claimed" | "running" | "done" | "failed";
+/** Structured per-job lifecycle event the tray Activity Feed renders. */
+export interface JobActivityEvent {
+  id: string;
+  title: string;
+  platform: string;
+  status: JobActivityStatus;
+  url?: string;
+  ts: number;
+}
+
 export interface ConsumerEvents {
   log?: (msg: string) => void;
+  onJob?: (e: JobActivityEvent) => void;
 }
 
 export class BrowserJobsConsumer {
@@ -38,6 +50,7 @@ export class BrowserJobsConsumer {
   private readonly executor: JobExecutor;
   private readonly workerType = "holo3_ponder";
   private readonly log: (msg: string) => void;
+  private readonly events?: ConsumerEvents;
 
   // Loosely typed: Convex's typed API expects FunctionReference objects, but
   // we address deployed functions by string name (the queue lives in another
@@ -92,6 +105,7 @@ export class BrowserJobsConsumer {
     this.config = config;
     this.executor = executor;
     this.log = events?.log ?? ((msg) => console.log(`[browser-jobs] ${msg}`));
+    this.events = events;
     this.createClient = deps?.createClient ?? ((url: string) => new ConvexClient(url));
   }
 
@@ -106,6 +120,21 @@ export class BrowserJobsConsumer {
       deviceId: this.config.deviceId as string,
       deviceSecret: this.config.deviceSecret as string,
     };
+  }
+
+  /** Emit a structured job-lifecycle event for the tray Activity Feed. */
+  private emitJob(job: BrowserJob, status: JobActivityStatus, url?: string): void {
+    if (!this.events?.onJob) return;
+    const p = (job.payload ?? {}) as Record<string, unknown>;
+    const title = String(p.title || p.name || p.productId || job.type || "Job");
+    this.events.onJob({
+      id: job._id,
+      title,
+      platform: String(job.platform || ""),
+      status,
+      url,
+      ts: Date.now(),
+    });
   }
 
   start(): void {
@@ -474,9 +503,11 @@ export class BrowserJobsConsumer {
     }
 
     this.log(`claim ${job._id} type=${job.type} platform=${job.platform}`);
+    this.emitJob(job, "claimed");
     let didAttemptExecute = false;
     try {
       await this.markStart(job._id);
+      this.emitJob(job, "running");
 
       didAttemptExecute = true;
       const outcome = await this.executor.execute(job);
@@ -500,6 +531,7 @@ export class BrowserJobsConsumer {
       }
 
       await this.markComplete(job._id, outcome);
+      this.emitJob(job, "done", (outcome.result as { url?: string } | undefined)?.url);
       this.log(`done ${job._id}`);
 
       // Feature C on a CLEAN success: FB friction can ride a nominally-ok
@@ -567,6 +599,7 @@ export class BrowserJobsConsumer {
       // writes). didAttemptExecute is informational for the count decision above.
       void didAttemptExecute;
       await this.markFail(job._id, message, requiresHuman, artifacts as unknown[]);
+      this.emitJob(job, "failed");
       await this.reconcileWithBackend(job);
     }
   }
