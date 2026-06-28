@@ -60,10 +60,7 @@ import { plannerConfigFromEnv } from "../src/agent/providers/planner";
 import {
   setProviderPreference,
   getEnginePreference,
-  setEnginePreference,
   getAutoReplayPreference,
-  setAutoReplayPreference,
-  type AgentEngine,
 } from "../src/agent/preferences";
 import { runAgpTask } from "../src/agent/agp/loop";
 import { AgpClient } from "../src/agent/agp/client";
@@ -2853,30 +2850,8 @@ function setupIpc(): void {
     return { ok: true };
   });
 
-  ipcMain.handle("agent:getEngine", () => getEnginePreference());
-
-  ipcMain.handle("agent:setEngine", (_e, engine: AgentEngine) => {
-    setEnginePreference(engine === "agp" ? "agp" : "composite");
-    return { ok: true, engine: getEnginePreference() };
-  });
-
-  ipcMain.handle("agent:getAutoReplay", () => getAutoReplayPreference());
-
-  ipcMain.handle("agent:setAutoReplay", (_e, on: boolean) => {
-    setAutoReplayPreference(!!on);
-    return { ok: true, autoReplay: getAutoReplayPreference() };
-  });
-
-  ipcMain.handle("agent:setProvider", async (_e, name: ProviderName) => {
-    try {
-      switchProvider(name);
-      return { ok: true };
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      broadcastState({ warmup: "error", errorMessage: message });
-      return { ok: false, error: message };
-    }
-  });
+  // (Removed dead provider/engine/auto-replay IPC handlers — the tray pins one
+  // execution path and the renderer chooser was stripped, so nothing calls them.)
 
   ipcMain.handle("agent:warm", async () => {
     try {
