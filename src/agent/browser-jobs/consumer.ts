@@ -80,10 +80,19 @@ export class BrowserJobsConsumer {
   private deferRecheckTimer: ReturnType<typeof setInterval> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(config: BrowserJobsConfig, executor: JobExecutor, events?: ConsumerEvents) {
+  // Injectable Convex client factory (tests pass a mock; prod uses ConvexClient).
+  private readonly createClient: (url: string) => any;
+
+  constructor(
+    config: BrowserJobsConfig,
+    executor: JobExecutor,
+    events?: ConsumerEvents,
+    deps?: { createClient?: (url: string) => any },
+  ) {
     this.config = config;
     this.executor = executor;
     this.log = events?.log ?? ((msg) => console.log(`[browser-jobs] ${msg}`));
+    this.createClient = deps?.createClient ?? ((url: string) => new ConvexClient(url));
   }
 
   /** True once this computer is LINKED (has a device credential) — use the
@@ -113,7 +122,7 @@ export class BrowserJobsConsumer {
       this.resetBreaker();
     }
 
-    this.client = new ConvexClient(this.config.convexURL);
+    this.client = this.createClient(this.config.convexURL);
     this.running = true;
     const idLabel = this.useDevice
       ? `device=${this.config.deviceId}`
