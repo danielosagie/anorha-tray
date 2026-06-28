@@ -33,7 +33,6 @@ import {
   click as screenClick,
   drag as screenDrag,
 } from "../src/screen";
-import { createOllamaNarrator } from "../src/agent/narrator";
 import { createExtractor } from "../src/agent/extractor";
 import { extractRows } from "../src/agent/extract";
 import { scrollToLoadAll } from "../src/agent/scroll-load";
@@ -283,12 +282,8 @@ function isRemoteConfigured(): boolean {
   return isProviderConfigured("remote");
 }
 
-// Narrator: small Ollama-backed chat model that speaks the intro / summary
-// in the buddy bubble. Decoupled from the planner so the Holo3 model can
-// focus on action selection. Defaults to Qwen3 0.6B; override with
-// NARRATOR_MODEL / NARRATOR_HOST. Failures fall back to templated lines —
-// the run never blocks on the narrator.
-const narrator = createOllamaNarrator();
+// (Narrator removed — the composite planner drives the run; the buddy says a
+// short status line directly, no Ollama round-trip for cosmetic narration.)
 
 // Browser client: Playwriter-backed CDP relay to the user's MAIN Chrome.
 // We embed Playwriter's relay (no external `playwriter mcp` daemon) so
@@ -2601,20 +2596,9 @@ function setupIpc(): void {
     dismissInputPill();
     setBuddyMode("active");
 
-    // Narrator intro — fires before warmup so the user hears the agent
-    // acknowledge their request immediately. Don't await before the buddy
-    // says SOMETHING; if the narrator is slow, fall back. We push a quick
-    // status first to never leave the user staring at silence.
+    // Acknowledge immediately so the user never stares at silence; the run
+    // starts right away (the planner is the brain).
     buddySay("status", "Got it…");
-    void (async () => {
-      // Composite mode: don't pay an Ollama round-trip (or its multi-
-      // second timeout) for a cosmetic intro line — the planner is the
-      // brain now and the run starts immediately.
-      if (!plannerConfigFromEnv()) {
-        const line = await narrator.intro({ task: prompt });
-        buddySay("thought", line);
-      }
-    })();
 
     let sessionId: string | null = null;
     if (convex) {
@@ -2841,12 +2825,6 @@ function setupIpc(): void {
       return { ok: true, result };
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
-      // Surface the failure: narrator gives a friendly framing on top of the
-      // raw error bubble below.
-      narrator
-        .summary({ task: prompt, outcome: "error", history: runHistory, error: message })
-        .then((line) => buddySay("thought", line))
-        .catch(() => {});
       buddySay("error", message);
       console.error("[agent:run]", message);
       if (sessionId && convex) {
@@ -2922,7 +2900,7 @@ function setupIpc(): void {
   });
 
   ipcMain.handle("app:show", () => {
-    if (!appWin || appWin.isDestroyed()) appWin = createAppWindow();
+    if (!appWin || appWin.isDestroyed()) appWin = createAppWindowWired();
     appWin.show();
     appWin.focus();
     return { ok: true };
@@ -3232,7 +3210,7 @@ function switchProvider(name: ProviderName): void {
  */
 function openHistoryWindow(): void {
   if (!appWin || appWin.isDestroyed()) {
-    appWin = createAppWindow();
+    appWin = createAppWindowWired();
     // ready-to-show in createAppWindow handles the first .show().
     // Add focus once the window is visible so it pops to the foreground
     // instead of mounting behind everything.
@@ -3247,6 +3225,16 @@ function openHistoryWindow(): void {
   appWin.show();
   appWin.focus();
   if (process.platform === "darwin") app.focus({ steal: true });
+}
+
+// Create the app window AND wire warm-on-focus/show (keeps the GPU hot while the
+// panel is open). Used by every on-demand open path — the app boots SILENT to the
+// tray (no window on launch), so warm listeners attach here, not at startup.
+function createAppWindowWired(): BrowserWindow {
+  const win = createAppWindow();
+  win.on("focus", pingWarmIfOpen);
+  win.on("show", pingWarmIfOpen);
+  return win;
 }
 
 function rebuildTrayMenu(): void {
@@ -3358,15 +3346,9 @@ app.whenReady().then(() => {
   // open → type → run flow so it feels instant like the engine should.
   void warmup.warmInBackground();
 
-  // Auto-open the AppWindow on launch so the user sees the history view
-  // immediately. They can close it; tray icon stays for re-summon.
-  if (!appWin || appWin.isDestroyed()) appWin = createAppWindow();
-  appWin.show();
-  appWin.focus();
-  // Keep the GPU hot while the panel is open (no cold-start mid-session); warm
-  // immediately whenever the panel is shown/focused so opening → running is fast.
-  appWin.on("focus", pingWarmIfOpen);
-  appWin.on("show", pingWarmIfOpen);
+  // Tray app: boot SILENT to the menu bar — no window on launch. The panel opens
+  // on demand (tray "Open", ⌘⇧H, or app:show), which creates it via
+  // createAppWindowWired (wires warm-on-focus). Keep the background keep-warm tick.
   startKeepWarm();
 
   // Boot the Buddy overlay once at startup. It stays open for the whole
