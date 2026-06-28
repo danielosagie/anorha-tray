@@ -50,14 +50,6 @@ type SessionRow = {
 };
 type View = "run" | "history" | "automations" | "settings";
 
-const PROVIDER_ORDER: ProviderName[] = ["hcompany", "remote", "local"];
-const PROVIDER_LABELS: Record<ProviderName, string> = { remote: "Modal", hcompany: "API", local: "Local" };
-const PROVIDER_HINTS: Record<ProviderName, string> = {
-  hcompany: "Hosted H Company API — fast, the default",
-  remote: "Self-hosted Holo 3.1 on Modal — cold starts can be slow",
-  local: "Ollama on this machine",
-};
-
 // Selling channels for sign-in. Auth lives in the user's real browser session,
 // which the agent reuses. Connected state is local (no backend channel store yet).
 const CHANNELS: Array<{ id: string; name: string; url: string; hint: string }> = [
@@ -139,8 +131,6 @@ export function App() {
   const flashToast = (t: string) => { setToast(t); setTimeout(() => setToast(""), 2600); };
 
   const working = !!agentState?.activeSessionId || replaying !== null;
-  const provider = agentState?.provider ?? "hcompany";
-  const warmup = agentState?.warmup ?? "cold";
   const permsMissing = perms?.platform === "darwin" && perms.accessibility !== "granted";
 
   const run = (task: string) => {
@@ -228,7 +218,6 @@ export function App() {
           <span className="side-grow" />
 
           <div className="side-foot">
-            <ProviderChip active={provider} warmup={warmup} />
             <NavItem id="settings" label="Settings" view={view} setView={setView} />
           </div>
         </aside>
@@ -236,7 +225,7 @@ export function App() {
         <main className="main">
           <div className="main-scroll" ref={mainScrollRef}>
             {view === "settings" ? (
-              <div className="page"><Settings perms={perms} provider={provider} /></div>
+              <div className="page"><Settings perms={perms} /></div>
             ) : view === "history" ? (
               <div className="page"><History onRun={run} onToast={flashToast} onRefreshRecipes={refreshRecipes} /></div>
             ) : view === "automations" ? (
@@ -603,57 +592,8 @@ function AutomationDetail({
   );
 }
 
-// ── Engine toggle (local composite loop vs server-side AGP brain) ─────────────
-function EngineToggle() {
-  const [engine, setEngine] = useState<"composite" | "agp" | null>(null);
-  useEffect(() => {
-    let alive = true;
-    void window.agent.getEngine().then((e) => {
-      if (alive) setEngine(e);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
-  const pick = (e: "composite" | "agp") => {
-    setEngine(e);
-    void window.agent.setEngine(e);
-  };
-  return (
-    <div className="crow">
-      <div className="crow-main">
-        <div className="ttl">Engine</div>
-        <div className="meta">
-          {engine === "agp"
-            ? "Server brain — fast Holo 3.1, Chrome tasks only (needs an attached tab)"
-            : "Local loop — drives your Mac + Chrome"}
-        </div>
-      </div>
-      <div style={{ display: "flex", gap: 6 }}>
-        <button
-          className={engine !== "agp" ? "mini primary" : "mini"}
-          onClick={() => pick("composite")}
-        >
-          Local
-        </button>
-        <button
-          className={engine === "agp" ? "mini primary" : "mini"}
-          onClick={() => pick("agp")}
-        >
-          Server
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ── Settings (channel auth + perms + brain) ──────────────────────────────────
-function Settings({
-  perms, provider,
-}: {
-  perms: PermissionsReport | null;
-  provider: ProviderName;
-}) {
+// ── Settings (channel auth + perms) ──────────────────────────────────────────
+function Settings({ perms }: { perms: PermissionsReport | null }) {
   const [connected, setConnected] = useState<Record<string, boolean>>(() => {
     try { return JSON.parse(localStorage.getItem("anorha_channels") || "{}"); } catch { return {}; }
   });
@@ -696,14 +636,6 @@ function Settings({
         {screenOk ? <span className="conn">● granted</span> : <button className="mini primary" onClick={() => void window.agent.openSystemSettings("screen")}>Grant</button>}
       </div>
       <button className="mini" style={{ margin: "8px 6px" }} onClick={() => void window.agent.reprobePermissions()}>Re-check permissions</button>
-
-      <div className="sect">Brain</div>
-      <EngineToggle />
-      <AutoReplayToggle />
-      <div className="crow">
-        <div className="crow-main"><div className="ttl">{PROVIDER_LABELS[provider]}</div><div className="meta">Grounder for the Local engine · {PROVIDER_HINTS[provider]}</div></div>
-        <span className="conn">● active</span>
-      </div>
     </>
   );
 }
@@ -744,27 +676,6 @@ function Onboarding({ onDone }: { onDone: () => void }) {
       <div className="dots">{slides.map((_, n) => <span key={n} className={n === i ? "on" : ""} />)}</div>
       <button className="cta" onClick={() => (last ? onDone() : setI(i + 1))}>{last ? "Get started" : "Next"}</button>
       {!last && <button className="skip" onClick={onDone}>Skip</button>}
-    </div>
-  );
-}
-
-// ── Provider chip ─────────────────────────────────────────────────────────────
-function ProviderChip({ active, warmup }: { active: ProviderName; warmup: AgentState["warmup"] }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="prov-wrap">
-      <button className="prov" onClick={() => setOpen((o) => !o)} title={PROVIDER_HINTS[active]}>
-        <span className={`pdot ${warmup}`} />{PROVIDER_LABELS[active]} ▾
-      </button>
-      {open && (
-        <div className="prov-menu" onMouseLeave={() => setOpen(false)}>
-          {PROVIDER_ORDER.map((p) => (
-            <button key={p} className={p === active ? "active" : ""} onClick={() => { if (p !== active) void window.agent.setProvider(p); setOpen(false); }}>
-              {PROVIDER_LABELS[p]}<span className="phint">{PROVIDER_HINTS[p]}</span>
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -822,28 +733,6 @@ function NavItem({
       {id === "run" && working && <span className="navitem-dot" />}
       {!!badge && badge > 0 && <span className="navitem-badge">{badge}</span>}
     </button>
-  );
-}
-
-// ── Auto-replay toggle (recipe-first) ────────────────────────────────────────
-function AutoReplayToggle() {
-  const [on, setOn] = useState<boolean | null>(null);
-  useEffect(() => {
-    let alive = true;
-    void window.agent.getAutoReplay().then((v) => alive && setOn(v));
-    return () => { alive = false; };
-  }, []);
-  const toggle = () => { const next = !on; setOn(next); void window.agent.setAutoReplay(next); };
-  return (
-    <div className="crow">
-      <div className="crow-main">
-        <div className="ttl">Auto-replay automations</div>
-        <div className="meta">Replay a saved automation when the task matches one (it self-heals). Start with "fresh …" to force a new run.</div>
-      </div>
-      <button className={`switch ${on ? "on" : ""}`} role="switch" aria-checked={!!on} onClick={toggle} title="Auto-replay">
-        <span className="knob" />
-      </button>
-    </div>
   );
 }
 

@@ -5,21 +5,6 @@ export type ProviderName = "remote" | "local" | "hcompany";
 const api = {
   runTask: (prompt: string) => ipcRenderer.invoke("agent:run", prompt),
   cancel: () => ipcRenderer.invoke("agent:cancel"),
-  setProvider: (name: ProviderName) => ipcRenderer.invoke("agent:setProvider", name),
-  // Brain engine: local composite loop vs server-side AGP (Holo 3.1) brain.
-  getEngine: () => ipcRenderer.invoke("agent:getEngine") as Promise<"composite" | "agp">,
-  setEngine: (engine: "composite" | "agp") =>
-    ipcRenderer.invoke("agent:setEngine", engine) as Promise<{
-      ok: boolean;
-      engine: "composite" | "agp";
-    }>,
-  // Recipe-first auto-replay: replay a saved automation that exactly matches.
-  getAutoReplay: () => ipcRenderer.invoke("agent:getAutoReplay") as Promise<boolean>,
-  setAutoReplay: (on: boolean) =>
-    ipcRenderer.invoke("agent:setAutoReplay", on) as Promise<{
-      ok: boolean;
-      autoReplay: boolean;
-    }>,
   warm: () => ipcRenderer.invoke("agent:warm"),
   getState: () => ipcRenderer.invoke("agent:state"),
   hideOverlay: () => ipcRenderer.invoke("overlay:hide"),
