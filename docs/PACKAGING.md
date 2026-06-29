@@ -1,8 +1,34 @@
 # Packaging & signing — Anorha tray
 
 Scaffold is in place: `electron-builder.yml`, `build/entitlements.mac.plist`,
-auto-update wiring (`electron-updater`, packaged-only), and `dist:*` scripts.
-What's left is **your accounts + creds** — nothing else blocks a signed build.
+real app icon (`build/icon.icns`) + menu-bar template, auto-update wiring
+(`electron-updater`), `dist:*`/`release` scripts, and a CI release workflow
+(`.github/workflows/release.yml`). What's left is **a GitHub repo + your Apple
+secrets** — nothing else blocks a signed, notarized download.
+
+## Recommended: CI release (mirrors snip-desktop — no local notarize)
+
+This reuses the EXACT pipeline already working for snip (`danielosagie/snip`),
+on the SAME Apple Developer account. CI signs + notarizes for you, so you never
+fight `notarytool` locally.
+
+1. **Put ponder-tray on GitHub** (e.g. `danielosagie/anorha-tray`; confirm/adjust
+   `publish.owner/repo` in `electron-builder.yml`).
+2. **Copy these repo secrets from your snip repo** (Settings → Secrets → Actions
+   — same values, same Apple account):
+   `MACOS_CERTIFICATE`, `MACOS_CERTIFICATE_PASSWORD`, `APPLE_ID`,
+   `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` (= `5TD6S2T34N`).
+   (You do NOT need `MACOS_INSTALLER_CERTIFICATE` — that was only for snip's `.pkg`;
+   the tray ships a plain DMG.)
+3. **Cut a release:** bump `version` in `package.json`, then
+   `git tag v1.0.0 && git push origin v1.0.0`.
+   GitHub Actions builds both arches, signs + notarizes, and publishes the DMG +
+   zip + `latest-mac.yml` to a Release marked **latest**. Your web "Download"
+   button points at `releases/latest/download/Anorha-<version>-arm64.dmg`, and
+   `electron-updater` reads the same feed.
+
+Branch/PR pushes run an unsigned smoke build (artifact only) so you know it still
+packages.
 
 ## Quick local smoke test (no signing)
 ```

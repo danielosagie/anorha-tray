@@ -47,6 +47,7 @@
     "dist:mac": "electron-vite build && electron-builder --mac",
     "dist:win": "electron-vite build && electron-builder --win",
     "dist:dir": "electron-vite build && electron-builder --dir",
+    "release": "electron-vite build && electron-builder --mac dmg zip --arm64 --x64 --publish always",
     "convex:dev": "convex dev",
     "convex:deploy": "convex deploy",
     "modal:deploy": "modal deploy modal_app.py",

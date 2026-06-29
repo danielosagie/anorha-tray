@@ -85,12 +85,11 @@ nsis:
   perMachine: false        # per-user install: no UAC, friendlier to auto-update
   allowToChangeInstallationDirectory: true
 
-# Auto-update feed. GitHub Releases is simplest; or use a generic feed on your
-# own host. Fill in before relying on electron-updater.
+# Auto-update feed + release target (same model as snip-desktop). The CI
+# `release` job publishes the signed+notarized DMG/zip + latest-mac.yml here on
+# a `v*` tag; electron-updater reads releases/latest. CONFIRM owner/repo once the
+# GitHub repo exists.
 publish:
   provider: github
-  owner: REPLACE_ME
-  repo: REPLACE_ME
-  # Or, instead of github:
-  # provider: generic
-  # url: https://updates.anorha.app
+  owner: danielosagie
+  repo: anorha-tray
