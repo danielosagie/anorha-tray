@@ -22,7 +22,7 @@ sssync-bknd. What's left needs your accounts/dashboards or a real device test.
 | 10c | `ponder://` deep link + single-instance focus | DONE | tsc (main-process; not preview-testable) |
 | 11a | Multi-computer dispatch — **any available** (the core) | DONE | backend `claimJobs`; tests |
 | 11b | Unlink this computer (offboarding) | DONE | preview Settings "This computer" → Unlink; backend `revokeByDevice` |
-| 11c | Optional **pin to a specific computer** (enhancement) | QUEUED | backend honors `payload.targetWorkerId`; needs deploy + 2nd device to wire+test |
+| 11c | Optional **pin to a specific computer** (enhancement) | BUILT (deploy-gated) | tsc-clean both repos; picker + full targetWorkerId path; needs deploy + 2nd device to behavior-test |
 | 12 | Mobile: linked-computers list + online/offline | DONE | ConnectionsScreen "Computers" section (pre-existing) |
 
 Everything testable without a deploy or a 2nd physical device is **built and
@@ -69,13 +69,19 @@ deploy-gated by design (below).
 4. **Flip the cutover** after the tray ships: set `BROWSER_JOBS_REQUIRE_DEVICE=true`
    in the Convex env to close the legacy bare-`userId` queue path.
 
-## Queued (deploy-gated; needs the steps above first)
-- **Optional pin-picker (node 11c)**, sssync_mobile_test + sssync-bknd: in the publish
-  flow let the user pick a specific linked computer, send `targetWorkerId` in the
-  `/api/products/publish` body; thread it controller → products service →
-  `adapter.createProduct` → `enqueuePonderJob` (the last hop already honors
-  `payload.targetWorkerId`). Default stays "any available." Can only be behavior-tested
-  with the backend deployed + a real 2nd linked computer, so it's queued not built.
+## Built but deploy-gated (verify after the steps above)
+- **Optional pin-picker (node 11c)** — BUILT, tsc-clean both repos, UNCOMMITTED for review:
+  - sssync-bknd: `PublishProductDto.targetWorkerId` (optional); `publishFacebook` passes
+    `dto.targetWorkerId` → `adapter.createProduct(..., { targetWorkerId })` → FB adapter
+    `createProduct` opts → `enqueuePonderJob(..., opts)` → `browserJobs:create.targetWorkerId`.
+  - sssync_mobile_test: `PublishConfirmationModal` shows a "Post from" chip row (Any /
+    Computer N + online dot) **only when FB is selected and 2+ computers are linked**;
+    the choice rides `onConfirm({ targetWorkerId })` → `confirmAndPublish` → publish body.
+  - Picker uses the existing public `computers` (workerPresence, no Clerk-authed query);
+    `computers[].workerId === deviceId === claimJobs targetWorkerId match` (verified).
+  - Default stays "any available." **Behavior-test needs the backend deployed + a real
+    2nd linked computer** (the picker only appears with 2+ live presences). ProductDetail's
+    direct re-publish path stays any-available (no picker there yet).
 - Trivial: drop the dead `createOverlayWindow` from electron/windows.ts.
 
 ## Verify locally
