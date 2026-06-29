@@ -358,7 +358,7 @@ function Triangle({ x, y }: { x: number; y: number }) {
         left: x - 10,
         top: y - 10,
         transform: "rotate(-35deg)",
-        filter: "drop-shadow(0 0 8px rgba(51, 128, 255, 0.65))",
+        filter: "drop-shadow(0 0 8px #7BB304)",
         pointerEvents: "none",
         willChange: "left, top",
       }}

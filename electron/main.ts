@@ -3317,6 +3317,9 @@ function switchProvider(name: ProviderName): void {
  * appearance and only force-show when the window already exists.
  */
 function openHistoryWindow(): void {
+  // Show the Dock icon while a window is open so the app appears in ⌘-Tab
+  // (the app boots agent-only/LSUIElement; the Dock is hidden again on close).
+  if (process.platform === "darwin") void app.dock?.show();
   if (!appWin || appWin.isDestroyed()) {
     appWin = createAppWindowWired();
     // ready-to-show in createAppWindow handles the first .show().
@@ -3342,6 +3345,11 @@ function createAppWindowWired(): BrowserWindow {
   const win = createAppWindow();
   win.on("focus", pingWarmIfOpen);
   win.on("show", pingWarmIfOpen);
+  // Back to tray-only (hide the Dock icon) once the main window is gone. The
+  // buddy overlay stays up but doesn't warrant a Dock presence.
+  win.on("closed", () => {
+    if (process.platform === "darwin") void app.dock?.hide();
+  });
   return win;
 }
 
@@ -3447,6 +3455,9 @@ function consumerEvents() {
 // FOCUS the already-running tray instead of starting a second copy. Register the
 // scheme + take a single-instance lock; a duplicate launch just surfaces the
 // existing window (openHistoryWindow is hoisted, so it's safe to reference here).
+// The app is named "Anorha" everywhere (menu bar, notifications, permission
+// prompts) regardless of the npm package name ("ponder-tray").
+app.setName("Anorha");
 app.setAsDefaultProtocolClient("ponder");
 const isPrimaryInstance = app.requestSingleInstanceLock();
 if (!isPrimaryInstance) {
@@ -3533,6 +3544,11 @@ app.whenReady().then(() => {
       `Primary hotkey (${primaryAccel}) failed; falling back to ${fallbackAccel}.`,
     );
   }
+
+  // Open/focus the main window from anywhere (⌘⇧A). The app is a tray app
+  // (hidden from ⌘-Tab until a window opens), so this is the quick way to summon
+  // it; once open it also shows in the Dock + ⌘-Tab.
+  globalShortcut.register("CommandOrControl+Shift+A", () => openHistoryWindow());
 
   // PANIC STOP — ⌘. (Cmd+Period) is the macOS convention for "cancel /
   // dismiss". Hitting this from anywhere flips the cancel flag, which the
