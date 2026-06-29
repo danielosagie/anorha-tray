@@ -3178,15 +3178,18 @@ function setupIpc(): void {
 }
 
 function buildTray(): void {
-  const icon = nativeImage
-    .createFromPath(join(__dirname, "../../assets/tray-icon.png"))
-    .resize({ width: 18, height: 18 });
+  // Template image = monochrome leaf; macOS auto-inverts it for light/dark menu
+  // bars. The "Template" filename suffix + @2x are picked up automatically.
+  const icon = nativeImage.createFromPath(
+    join(__dirname, "../../assets/tray-iconTemplate.png"),
+  );
   if (icon.isEmpty()) {
     // No icon file — use an empty image but set a title so the user can see it
     // in the menu bar. macOS will render the title text instead of an icon.
     tray = new Tray(nativeImage.createEmpty());
     if (process.platform === "darwin") tray.setTitle("Anorha"); //Tray title
   } else {
+    icon.setTemplateImage(true);
     tray = new Tray(icon);
   }
   tray.setToolTip("Anorha · ⌘E to summon");
