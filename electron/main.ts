@@ -42,6 +42,7 @@ import {
   clearDeviceCredential,
   startBrowserJobsConsumer,
   registerDevice as registerBrowserJobsDevice,
+  revokeDeviceRemote,
   type BrowserJobsConsumer,
   type JobActivityEvent,
 } from "../src/agent/browser-jobs/index";
@@ -2979,13 +2980,23 @@ function setupIpc(): void {
     },
   );
 
-  ipcMain.handle("device:unlink", () => {
+  ipcMain.handle("device:unlink", async () => {
+    const cred = loadDeviceCredential();
     try {
       browserJobsConsumer?.stop();
     } catch {
       /* ignore */
     }
     browserJobsConsumer = null;
+    // Best-effort backend revoke (device-authed) so a lost/unlinked machine can't
+    // be used even if the local file is restored. Local clear happens regardless.
+    if (cred) {
+      try {
+        await revokeDeviceRemote(cred);
+      } catch (e) {
+        console.error("[device] remote revoke failed:", e);
+      }
+    }
     clearDeviceCredential();
     return { ok: true };
   });
@@ -3313,7 +3324,25 @@ function consumerEvents() {
   };
 }
 
+// ── ponder:// deep link + single instance ──────────────────────────────────
+// Lets the phone's "turn this on" recovery CTA (any ponder:// link) launch or
+// FOCUS the already-running tray instead of starting a second copy. Register the
+// scheme + take a single-instance lock; a duplicate launch just surfaces the
+// existing window (openHistoryWindow is hoisted, so it's safe to reference here).
+app.setAsDefaultProtocolClient("ponder");
+const isPrimaryInstance = app.requestSingleInstanceLock();
+if (!isPrimaryInstance) {
+  app.quit();
+} else {
+  app.on("second-instance", () => openHistoryWindow());
+  app.on("open-url", (e) => {
+    e.preventDefault();
+    openHistoryWindow();
+  });
+}
+
 app.whenReady().then(() => {
+  if (!isPrimaryInstance) return; // a duplicate launch already quit above
   // Keep dock visible during dev so the user has a visual anchor; can hide
   // later via tray menu or remove this check entirely once tray icon ships.
   // if (process.platform === "darwin") app.dock?.hide();

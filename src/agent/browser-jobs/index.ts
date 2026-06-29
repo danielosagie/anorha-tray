@@ -43,6 +43,7 @@ export {
   clearDeviceCredential,
   generateDeviceToken,
   registerDevice,
+  revokeDeviceRemote,
   deviceFilePath,
   type DeviceCredential,
   type RegisterDeviceInput,

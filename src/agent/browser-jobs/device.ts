@@ -130,3 +130,24 @@ export async function registerDevice(input: RegisterDeviceInput): Promise<Device
     }
   }
 }
+
+/**
+ * Best-effort backend revoke for offboarding. The desktop holds only its device
+ * credential (no live Clerk session), so it revokes with (deviceId, deviceSecret)
+ * via devices:revokeByDevice. Call this BEFORE clearDeviceCredential on unlink.
+ */
+export async function revokeDeviceRemote(cred: DeviceCredential): Promise<void> {
+  const client: any = new ConvexClient(cred.convexURL);
+  try {
+    await client.mutation("devices:revokeByDevice", {
+      deviceId: cred.deviceId,
+      deviceSecret: cred.deviceSecret,
+    });
+  } finally {
+    try {
+      client.close();
+    } catch {
+      /* ignore */
+    }
+  }
+}

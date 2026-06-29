@@ -79,6 +79,7 @@ export function App() {
   >(null);
   // Live dispatched-job activity (deduped by id, latest status wins) for the feed.
   const [activity, setActivity] = useState<Activity[]>([]);
+  const [online, setOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
   const mainScrollRef = useRef<HTMLDivElement>(null);
 
   // The main pane is one persistent scroll container, so its scrollTop survives
@@ -108,6 +109,14 @@ export function App() {
       setActivity((prev) => [...prev.filter((x) => x.id !== e.id), e as Activity].slice(-50));
     });
     return () => { mounted = false; unsub(); };
+  }, []);
+
+  useEffect(() => {
+    const on = () => setOnline(true);
+    const off = () => setOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); };
   }, []);
 
   useEffect(() => {
@@ -201,6 +210,13 @@ export function App() {
 
   const newTask = () => { setView("run"); setAnswer(""); setPendingTask(""); setReplaying(null); setLiveLine(""); };
 
+  const handleUnlink = async () => {
+    await window.agent.unlinkDevice();
+    setActivity([]);
+    setLink({ linked: false });
+    setView("run");
+  };
+
   return (
     <div className="anorha-root">
       <PanelStyles />
@@ -239,7 +255,7 @@ export function App() {
         <main className="main">
           <div className="main-scroll" ref={mainScrollRef}>
             {view === "settings" ? (
-              <div className="page"><Settings perms={perms} /></div>
+              <div className="page"><Settings perms={perms} link={link} onUnlink={handleUnlink} /></div>
             ) : view === "history" ? (
               <div className="page"><History onRun={run} onToast={flashToast} onRefreshRecipes={refreshRecipes} /></div>
             ) : view === "automations" ? (
@@ -254,6 +270,7 @@ export function App() {
                   live={liveLine}
                   task={replaying ?? pendingTask}
                   activity={activity}
+                  online={online}
                   onOpenSettings={() => setView("settings")}
                 />
               </div>
@@ -283,10 +300,10 @@ function feedOutcome(status: SessionRow["status"]): string {
 }
 
 function TrayFeed({
-  deviceName, working, live, task, activity, onOpenSettings,
+  deviceName, working, live, task, activity, online, onOpenSettings,
 }: {
   deviceName?: string; working: boolean; live: string; task: string;
-  activity: Activity[]; onOpenSettings: () => void;
+  activity: Activity[]; online: boolean; onOpenSettings: () => void;
 }) {
   // Fallback feed (agent's local sessions) shown only before any dispatched job
   // activity exists — once jobs flow from the queue, the live activity wins.
@@ -304,7 +321,13 @@ function TrayFeed({
         </button>
       </div>
 
-      {runningAct ? (
+      {!online ? (
+        <div className="ready-strip">
+          <span className="dot" style={{ background: "#9AA0AA" }} />
+          <span className="rs-main">Offline</span>
+          <span className="rs-sub">· Queued commands run when you reconnect</span>
+        </div>
+      ) : runningAct ? (
         <div className="live">
           <span className="spinner" />
           <div className="live-main">
@@ -718,7 +741,7 @@ function AutomationDetail({
 }
 
 // ── Settings (channel auth + perms) ──────────────────────────────────────────
-function Settings({ perms }: { perms: PermissionsReport | null }) {
+function Settings({ perms, link, onUnlink }: { perms: PermissionsReport | null; link: { name?: string; deviceId?: string } | null; onUnlink: () => void }) {
   const [connected, setConnected] = useState<Record<string, boolean>>(() => {
     try { return JSON.parse(localStorage.getItem("anorha_channels") || "{}"); } catch { return {}; }
   });
@@ -732,6 +755,16 @@ function Settings({ perms }: { perms: PermissionsReport | null }) {
   return (
     <>
       <div className="page-h">Settings</div>
+
+      <div className="sect">This computer</div>
+      <div className="crow">
+        <div className="crow-main">
+          <div className="ttl">{link?.name || "This computer"}</div>
+          <div className="meta">{link?.deviceId ? `id ${link.deviceId.slice(0, 10)}…` : "linked"}</div>
+        </div>
+        <button className="mini" style={{ color: "#D8434F" }} onClick={onUnlink}>Unlink</button>
+      </div>
+
       <div className="sect">Selling channels</div>
       <p className="settings-note">Sign in once in your browser — Anorha reuses that session to act for you. Connection status is local.</p>
       {CHANNELS.map((c) => (
