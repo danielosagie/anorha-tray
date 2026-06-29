@@ -1,6 +1,6 @@
 {
   "name": "ponder-tray",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Anorha desktop tray. Links your account, receives commands, runs them over your real Chrome + mouse, returns the result. Forked from the Ponder (holo3-agent) engine; stripped to a clean signed background tray app.",
   "author": "Anorha",
   "license": "Apache-2.0",
