@@ -110,11 +110,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          version="$(node -p "require('./package.json').version")"
-          arm="release/Anorha-${version}-arm64.dmg"
-          x64="release/Anorha-${version}-x64.dmg"
-          if [[ ! -f "$arm" || ! -f "$x64" ]]; then
-            echo "::error::expected DMGs not found"; ls -la release/ || true; exit 1
+          # Locate the DMGs wherever electron-builder put them (flat release/ or
+          # a nested release/<version>/), so a directories.output change can't
+          # break this again.
+          arm="$(ls release/Anorha-*-arm64.dmg release/*/Anorha-*-arm64.dmg 2>/dev/null | head -1)"
+          x64="$(ls release/Anorha-*-x64.dmg release/*/Anorha-*-x64.dmg 2>/dev/null | head -1)"
+          if [[ -z "$arm" || -z "$x64" ]]; then
+            echo "::error::expected DMGs not found"; find release -name '*.dmg' || true; exit 1
           fi
           # Version-less copies so the web Download button has a STABLE URL
           # (releases/latest/download/Anorha-arm64.dmg) across every release.
