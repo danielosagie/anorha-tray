@@ -67,6 +67,8 @@ const api = {
       deviceId?: string;
       error?: string;
     }>,
+  // Abort an in-flight system-browser sign-in.
+  linkCancel: () => ipcRenderer.invoke("device:linkCancel") as Promise<{ ok: boolean }>,
   unlinkDevice: () =>
     ipcRenderer.invoke("device:unlink") as Promise<{ ok: boolean }>,
   // ── Tray Activity Feed (dispatched-job lifecycle) ──

@@ -13,18 +13,27 @@ directories:
   buildResources: build
   output: release/${version}
 
-# Negative-glob list (electron-vite pattern): source is bundled into out/, so it
-# never ships; node_modules production deps are still included automatically.
+# POSITIVE includes (not negations): everything the main/preload/renderer need is
+# bundled into out/ by electron-vite, so we ship ONLY out/ + package.json + the
+# tray assets. This definitively keeps ALL top-level source (src/, bench/, convex/,
+# electron/, examples/, tests/) out of the signed asar — a negation-only list does
+# NOT (electron-builder copies the whole project root otherwise). Production
+# node_modules are included automatically regardless of this list; devDependencies
+# (esbuild, electron, vite…) are auto-pruned.
 files:
-  - '!**/.vscode/*'
-  - '!src/*'
-  - '!electron.vite.config.{js,ts,mjs,cjs}'
-  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml,package-lock.json}'
-  - '!{tsconfig.json,tsconfig.*.json}'
-  - '!{bench,examples,docs,skills,convex,migrations}/**'
-  - '!{modal_app.py,modal_app_sglang.py}'
-  - '!tests/**'
-  - '!**/*.md'
+  - 'out/**'
+  - 'package.json'
+  - 'assets/**'
+  - '!**/*.map'
+  # esbuild ships a ~10MB Mach-O bundler binary used only at build time (vite /
+  # convex codegen) — nothing references it at app runtime. Safe to drop.
+  - '!node_modules/esbuild/**'
+  - '!node_modules/@esbuild/**'
+  # Neither the mac nor win build needs the Linux native binary (the libnut
+  # packages declare os:[darwin,linux,win32], defeating auto-pruning). Excluded
+  # globally here; the small cross-binary (mac ships win32 / win ships darwin) is
+  # left in rather than using per-platform `files`, which breaks config merge.
+  - '!node_modules/@nut-tree-fork/libnut-linux/**'
 
 # Native modules can't run from inside the asar archive — unpack them, or the
 # app works in dev and crashes only after packaging.

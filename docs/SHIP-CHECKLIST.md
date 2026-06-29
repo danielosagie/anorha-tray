@@ -84,6 +84,20 @@ deploy-gated by design (below).
     direct re-publish path stays any-available (no picker there yet).
 - Trivial: drop the dead `createOverlayWindow` from electron/windows.ts.
 
+## Hardening pass (adversarial review wa02mwic7 — fixed)
+- **Baked public config** (`electron/public-config.ts`): a Finder-launched build has no cwd `.env`, which would have left Convex/API/Clerk null and silently broken linking. Public prod defaults now bake in (env still overrides). **This was the ship-blocker.**
+- Token returns via **POST body**, not the URL (out of browser history); CORS on the loopback.
+- A wrong/stray `/callback` is now ignored (400) instead of aborting a real sign-in; only timeout/cancel end a pending link.
+- Sign-in is **cancellable** (`device:linkCancel` + LinkGate "Cancel"), 2-min timeout (was 5).
+- Consumer-start after link is **best-effort** — a transient failure no longer reports the (already-persisted) link as failed.
+- Auto-update gated off until a real feed is set (`PONDER_DISABLE_UPDATER=1` escape hatch) + `.catch()` on the check.
+- Packaging: dropped dev source (`electron/`, `scripts/`, `.claude/`…), dead `esbuild` Mach-O, and foreign-OS `libnut` from the signed asar.
+- Callback page shows **which account** is linking (wrong-account guard).
+
+### Remaining polish (non-blocking)
+- `assets/tray-icon.png` (menu-bar template icon) + `build/icon.icns`/`icon.ico` — without them the tray falls back to text + default Electron icon. Design assets to add.
+- Surface the linked account email/org in the tray Settings "This computer" row (today it shows hostname + deviceId). Needs the org-lookup/registerDevice to return a readable identity.
+
 ## Verify locally
 - Renderer UI: `cd ponder-tray && npx vite --config vite.preview.config.ts` → http://localhost:5199 (`?gate=link` LinkGate, `?gate=onboard` onboarding).
 - Real app: `npm run dev` (Electron).

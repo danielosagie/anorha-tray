@@ -421,6 +421,8 @@ function LinkGate({
     }
   };
 
+  const cancel = () => { void window.agent.linkCancel(); };
+
   return (
     <div className="onb">
       <span className="mark big" aria-hidden>
@@ -437,6 +439,12 @@ function LinkGate({
       <button className="cta" disabled={busy} onClick={signIn}>
         {busy ? "Waiting…" : "Sign in"}
       </button>
+
+      {busy && (
+        <div className="gate-note" style={{ cursor: "pointer" }} onClick={cancel}>
+          Cancel
+        </div>
+      )}
     </div>
   );
 }

@@ -27,6 +27,7 @@ const sub = (_cb?: unknown) => () => {};
   listRecipes: async () => [],
   registerDevice: async () => ({ ok: true, deviceId: "dev_preview" }),
   linkViaBrowser: async () => ({ ok: true, deviceId: "dev_preview" }),
+  linkCancel: async () => ({ ok: true }),
   unlinkDevice: async () => ({ ok: true }),
   getRecentActivity: async () => ([
     { id: "j1", title: "Vintage Levi's 501 · $48", platform: "facebook_marketplace", status: "done", url: "https://example.com/l", ts: Date.now() - 120_000 },

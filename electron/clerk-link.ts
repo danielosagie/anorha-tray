@@ -8,17 +8,26 @@
  *   1. main starts a one-shot http://127.0.0.1:<port> listener + a state nonce
  *   2. open <webBaseUrl>/desktop-callback?port=&state= in the SYSTEM browser
  *   3. that hosted page (on app.anorha.app, where Clerk is authenticated) signs
- *      the user in, mints a short-lived session token, and top-level-redirects to
- *      http://127.0.0.1:<port>/callback?token=&state=
- *   4. we capture the token, show a "done" page, close the server
+ *      the user in, mints a short-lived session token, and POSTs it to
+ *      http://127.0.0.1:<port>/callback as { token, state }
+ *   4. we validate the state nonce, capture the token, ack, and close the server
  *
  * Every Clerk-facing origin stays a real subdomain, so pk_live_ never sees the
  * Electron origin. The captured token is short-lived and used once, immediately,
  * to register the long-lived device credential (see device.ts / device:register).
+ *
+ * Hardening (post-review):
+ *  - token comes back in a POST BODY, not the URL query, so it never lands in
+ *    browser history (a GET-with-query path is kept only as a fallback);
+ *  - a wrong/stray /callback (bad or missing state) is IGNORED, not fatal — only
+ *    the timeout or an explicit cancel ends a pending link, so a duplicate tab or
+ *    a localhost probe can't abort a real sign-in;
+ *  - the in-flight link is cancellable (device:linkCancel → cancelActiveLink).
+ *
  * Hosted page contents: docs/DESKTOP-CALLBACK-PAGE.md.
  */
 
-import { createServer } from "node:http";
+import { createServer, type ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 import { shell } from "electron";
 
@@ -39,6 +48,14 @@ function page(title: string, body: string): string {
 const SUCCESS_HTML = page("Computer linked", "You can close this tab and return to Anorha.");
 const FAILURE_HTML = page("Link failed", "Something went wrong. Return to Anorha and try again.");
 
+// The hosted page is cross-origin to the loopback, so its POST needs CORS. Safe
+// here: the listener is 127.0.0.1-only, single-use, and gated on the state nonce.
+const CORS: Record<string, string> = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "POST, GET, OPTIONS",
+  "access-control-allow-headers": "content-type",
+};
+
 export interface LoopbackLinkResult {
   clerkToken: string;
 }
@@ -50,11 +67,20 @@ export interface LoopbackLinkOptions {
   timeoutMs?: number;
 }
 
+// One link at a time; device:linkCancel tears down the in-flight attempt.
+let activeCancel: ((reason: "cancelled") => void) | null = null;
+
+/** Abort the in-flight system-browser link, if any (no-op when idle). */
+export function cancelActiveLink(): void {
+  activeCancel?.("cancelled");
+}
+
 /**
  * Open the hosted desktop-callback page in the system browser and resolve with
  * the short-lived Clerk session token it hands back over loopback. Rejects on
- * timeout, a state mismatch, or a transport error. Binds to 127.0.0.1 only and
- * accepts exactly one callback before closing.
+ * timeout, explicit cancel, or a transport error. Binds to 127.0.0.1 only and
+ * accepts exactly one VALID (state-matching) callback before closing; stray or
+ * wrong-state requests are answered 400 and ignored.
  */
 export function linkViaBrowser(opts: LoopbackLinkOptions): Promise<LoopbackLinkResult> {
   const state = randomBytes(16).toString("hex");
@@ -62,6 +88,32 @@ export function linkViaBrowser(opts: LoopbackLinkOptions): Promise<LoopbackLinkR
 
   return new Promise<LoopbackLinkResult>((resolve, reject) => {
     let done = false;
+
+    function finish(settle: () => void) {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      activeCancel = null;
+      try {
+        server.close();
+      } catch {
+        /* ignore */
+      }
+      settle();
+    }
+    const settleOk = (token: string) => finish(() => resolve({ clerkToken: token }));
+    const settleErr = (e: Error) => finish(() => reject(e));
+
+    // Settle ONLY on a valid token+state. A mismatch is answered 400 but left
+    // pending so a stray/hostile request can't abort a legitimate sign-in.
+    function handle(token: string, gotState: string, res: ServerResponse): void {
+      if (token && gotState === state) {
+        res.writeHead(200, { "content-type": "text/html", ...CORS }).end(SUCCESS_HTML);
+        settleOk(token);
+      } else {
+        res.writeHead(400, { "content-type": "text/html", ...CORS }).end(FAILURE_HTML);
+      }
+    }
 
     const server = createServer((req, res) => {
       let url: URL;
@@ -71,50 +123,55 @@ export function linkViaBrowser(opts: LoopbackLinkOptions): Promise<LoopbackLinkR
         res.writeHead(400).end();
         return;
       }
+      if (req.method === "OPTIONS") {
+        res.writeHead(204, CORS).end();
+        return;
+      }
       if (url.pathname !== "/callback") {
-        res.writeHead(404, { "content-type": "text/html" }).end(page("Not found", ""));
+        res.writeHead(404, { "content-type": "text/html", ...CORS }).end(page("Not found", ""));
         return;
       }
-      const token = url.searchParams.get("token") || "";
-      const gotState = url.searchParams.get("state") || "";
-      if (!token || gotState !== state) {
-        res.writeHead(400, { "content-type": "text/html" }).end(FAILURE_HTML);
-        finish(() => reject(new Error("Link failed — please try again.")));
+      if (req.method === "POST") {
+        // Preferred path: token in the body, never the URL (keeps it out of history).
+        let body = "";
+        req.on("data", (chunk) => {
+          body += chunk;
+          if (body.length > 1_000_000) req.destroy();
+        });
+        req.on("end", () => {
+          let token = "";
+          let gotState = "";
+          try {
+            const j = JSON.parse(body || "{}") as { token?: unknown; state?: unknown };
+            token = String(j.token ?? "");
+            gotState = String(j.state ?? "");
+          } catch {
+            /* malformed → handled as a mismatch below */
+          }
+          handle(token, gotState, res);
+        });
         return;
       }
-      res.writeHead(200, { "content-type": "text/html" }).end(SUCCESS_HTML);
-      finish(() => resolve({ clerkToken: token }));
+      // GET fallback (token in query) — only if a host can't POST; prefer POST.
+      handle(url.searchParams.get("token") || "", url.searchParams.get("state") || "", res);
     });
 
     const timer = setTimeout(
-      () => finish(() => reject(new Error("Sign-in timed out — please try again."))),
+      () => settleErr(new Error("Sign-in timed out — please try again.")),
       timeoutMs,
     );
-
-    function finish(settle: () => void) {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      try {
-        server.close();
-      } catch {
-        /* ignore */
-      }
-      settle();
-    }
-
-    server.on("error", (e) => finish(() => reject(e)));
+    activeCancel = () => settleErr(new Error("Sign-in cancelled."));
+    server.on("error", (e) => settleErr(e instanceof Error ? e : new Error(String(e))));
 
     server.listen(0, "127.0.0.1", () => {
       const addr = server.address();
       const port = addr && typeof addr === "object" ? addr.port : 0;
       if (!port) {
-        finish(() => reject(new Error("Could not open a local sign-in port.")));
+        settleErr(new Error("Could not open a local sign-in port."));
         return;
       }
       const base = opts.webBaseUrl.replace(/\/+$/, "");
-      const target = `${base}/desktop-callback?port=${port}&state=${state}`;
-      void shell.openExternal(target);
+      void shell.openExternal(`${base}/desktop-callback?port=${port}&state=${state}`);
     });
   });
 }

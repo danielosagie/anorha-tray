@@ -46,7 +46,8 @@ import {
   type BrowserJobsConsumer,
   type JobActivityEvent,
 } from "../src/agent/browser-jobs/index";
-import { linkViaBrowser } from "./clerk-link";
+import { linkViaBrowser, cancelActiveLink } from "./clerk-link";
+import { PUBLIC_CONFIG } from "./public-config";
 import { autoUpdater } from "electron-updater";
 import type { RouterClient } from "../src/agent/router";
 import type { AgentEvents, ProviderName } from "../src/agent/types";
@@ -276,7 +277,7 @@ function dismissInputPill(): void {
   inputPillVisible = false;
 }
 
-const convexUrl = process.env.VITE_CONVEX_URL ?? process.env.CONVEX_URL;
+const convexUrl = process.env.VITE_CONVEX_URL ?? process.env.CONVEX_URL ?? PUBLIC_CONFIG.convexUrl;
 const convex = convexUrl ? new ConvexHttpClient(convexUrl) : null;
 
 // Back-compat alias used elsewhere in this file.
@@ -2918,10 +2919,11 @@ function setupIpc(): void {
     provider: executorNameFor(providerName),
     backgroundMode: BACKGROUND_MODE,
     // Surfaced for diagnostics + org lookup. Sign-in itself happens in the
-    // system browser (device:linkViaBrowser), not in the renderer.
-    clerkPublishableKey: process.env.CLERK_PUBLISHABLE_KEY ?? null,
-    apiBaseUrl: process.env.PONDER_API_BASE_URL ?? null,
-    webBaseUrl: process.env.PONDER_WEB_BASE_URL ?? "https://app.anorha.app",
+    // system browser (device:linkViaBrowser), not in the renderer. Public
+    // production defaults baked in so a Finder-launched build (no cwd .env) works.
+    clerkPublishableKey: process.env.CLERK_PUBLISHABLE_KEY ?? PUBLIC_CONFIG.clerkPublishableKey,
+    apiBaseUrl: process.env.PONDER_API_BASE_URL ?? PUBLIC_CONFIG.apiBaseUrl,
+    webBaseUrl: process.env.PONDER_WEB_BASE_URL ?? PUBLIC_CONFIG.webBaseUrl,
   }));
 
   // ── Device linking (Phase 1) — Clerk sign-in mints a per-device secret. ──
@@ -2954,9 +2956,9 @@ function setupIpc(): void {
     platform?: string;
   }): Promise<{ ok: boolean; deviceId?: string; error?: string }> => {
     try {
-      const convexURL = process.env.VITE_CONVEX_URL || convexUrl || "";
+      const convexURL = process.env.VITE_CONVEX_URL || convexUrl || PUBLIC_CONFIG.convexUrl;
       if (!convexURL) return { ok: false, error: "no Convex URL configured" };
-      const apiBase = (process.env.PONDER_API_BASE_URL || "").replace(/\/+$/, "");
+      const apiBase = (process.env.PONDER_API_BASE_URL || PUBLIC_CONFIG.apiBaseUrl).replace(/\/+$/, "");
       if (!apiBase) return { ok: false, error: "no API base configured" };
       // Resolve the account's active org (returns { orgId }). registerDevice
       // requires an explicit orgId.
@@ -2974,12 +2976,19 @@ function setupIpc(): void {
         name: (args.name && args.name.trim()) || os.hostname(),
         platform: args.platform,
       });
+      // Credential is persisted → the link SUCCEEDED. Starting the consumer is
+      // best-effort: a transient failure must not report the link as failed
+      // (the launch-time self-heal at whenReady restarts it next boot anyway).
       try {
         browserJobsConsumer?.stop();
       } catch {
         /* ignore */
       }
-      browserJobsConsumer = await startBrowserJobsConsumer({ events: consumerEvents() });
+      startBrowserJobsConsumer({ events: consumerEvents() })
+        .then((c) => {
+          browserJobsConsumer = c;
+        })
+        .catch((e) => console.error("[browser-jobs] start after link failed:", e));
       return { ok: true, deviceId: cred.deviceId };
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -2997,12 +3006,20 @@ function setupIpc(): void {
   // Clerk SDK runs in the renderer (its file:// origin can't talk to pk_live_).
   ipcMain.handle("device:linkViaBrowser", async () => {
     try {
-      const webBaseUrl = process.env.PONDER_WEB_BASE_URL || "https://app.anorha.app";
-      const { clerkToken } = await linkViaBrowser({ webBaseUrl });
+      const webBaseUrl = process.env.PONDER_WEB_BASE_URL || PUBLIC_CONFIG.webBaseUrl;
+      // 2-min window: long enough to sign in, short enough that an abandoned
+      // attempt recovers without a 5-min "Waiting…" hang. Cancel is also wired.
+      const { clerkToken } = await linkViaBrowser({ webBaseUrl, timeoutMs: 120_000 });
       return await registerWithClerkToken({ clerkToken });
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
+  });
+
+  // Abort an in-flight system-browser sign-in (the LinkGate "Cancel" button).
+  ipcMain.handle("device:linkCancel", () => {
+    cancelActiveLink();
+    return { ok: true };
   });
 
   ipcMain.handle("device:unlink", async () => {
@@ -3372,13 +3389,16 @@ if (!isPrimaryInstance) {
 // are swallowed so they never surface to the user.
 function maybeCheckForUpdates(): void {
   if (!app.isPackaged) return;
+  // Skip entirely until a real publish feed is configured, so a placeholder
+  // feed (electron-builder.yml owner/repo REPLACE_ME) can't 404 on every launch.
+  if (process.env.PONDER_DISABLE_UPDATER === "1") return;
   autoUpdater.on("error", (e) => console.error("[updater]", e?.message || e));
-  try {
-    void autoUpdater.checkForUpdatesAndNotify();
-    setInterval(() => void autoUpdater.checkForUpdatesAndNotify(), 6 * 60 * 60 * 1000);
-  } catch (e) {
-    console.error("[updater] check failed:", e);
-  }
+  // checkForUpdates() re-throws after emitting 'error', so the promise rejects
+  // regardless of the listener — .catch() each call, never a bare void.
+  const check = () =>
+    autoUpdater.checkForUpdatesAndNotify().catch((e) => console.error("[updater]", e?.message || e));
+  void check();
+  setInterval(() => void check(), 6 * 60 * 60 * 1000);
 }
 
 app.whenReady().then(() => {
