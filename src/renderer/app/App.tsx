@@ -12,6 +12,7 @@
  * selected provider (default: the H Company API). No from-scratch loop.
  */
 import { useState, useEffect, useRef } from "react";
+import anorhaIcon from "../shared/anorha-icon.png";
 import { useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
@@ -425,12 +426,7 @@ function LinkGate({
 
   return (
     <div className="onb">
-      <span className="mark big" aria-hidden>
-        <svg viewBox="0 0 24 24" fill="none">
-          <path d="M5 19c0-7 6-13 14-13 0 8-6 13-14 13z" fill="#fff" />
-          <path d="M5 19c3-5 7-8 11-9" stroke="#3B6D11" strokeWidth="1.6" strokeLinecap="round" />
-        </svg>
-      </span>
+      <img className="markimg" src={anorhaIcon} alt="" aria-hidden />
       <h2>Link this computer</h2>
       <p>{busy ? "Finish signing in in your browser." : "Sign in to connect this Mac. It runs the commands you send."}</p>
 
@@ -753,7 +749,7 @@ function Connect({ perms }: { perms: PermissionsReport | null }) {
   return (
     <div className="intro">
       <h2>Give Anorha control of your Mac</h2>
-      <p>Anorha drives your real apps and Chrome to do the work. macOS needs <b>Accessibility</b> (and Screen Recording) granted once — without it, clicks are silently dropped.</p>
+      <p>Anorha works right on your Mac to get things done for you. Grant <b>Accessibility</b> (and Screen Recording) once so it can act on your behalf.</p>
       <button className="cta" onClick={() => void window.agent.openSystemSettings("accessibility")}>Open Accessibility settings</button>
       <div className="cta-row">
         <button className="ghost" onClick={() => void window.agent.openSystemSettings("screen")}>Screen Recording</button>
@@ -769,16 +765,14 @@ function Connect({ perms }: { perms: PermissionsReport | null }) {
 function Onboarding({ onDone }: { onDone: () => void }) {
   const [i, setI] = useState(0);
   const slides = [
-    { t: "Meet Anorha", b: "Tell it what you want sold — it drives your real apps and Chrome to make it happen, in the background, on the fast Holo 3.1 brain." },
-    { t: "It learns your flows", b: "Every run is recorded. Save the good ones as Automations and replay them in a fraction of the time — no thinking required the second time." },
-    { t: "Connect your channels", b: "Sign in once to Facebook Marketplace, eBay, Poshmark and more in Settings. Anorha reuses your browser session to act for you." },
+    { t: "Meet Anorha", b: "Tell it what you want sold. It does the work for you in the background, while you get on with your day." },
+    { t: "It learns your flows", b: "Every run is saved. Replay your best ones as Automations in a fraction of the time." },
+    { t: "Connect your channels", b: "Sign in once to Facebook Marketplace, eBay, Poshmark and more. Anorha lists and manages them for you." },
   ];
   const last = i === slides.length - 1;
   return (
     <div className="onb">
-      <span className="mark big" aria-hidden>
-        <svg viewBox="0 0 24 24" fill="none"><path d="M5 19c0-7 6-13 14-13 0 8-6 13-14 13z" fill="#fff" /><path d="M5 19c3-5 7-8 11-9" stroke="#3B6D11" strokeWidth="1.6" strokeLinecap="round" /></svg>
-      </span>
+      <img className="markimg" src={anorhaIcon} alt="" aria-hidden />
       <h2>{slides[i].t}</h2>
       <p>{slides[i].b}</p>
       <div className="dots">{slides.map((_, n) => <span key={n} className={n === i ? "on" : ""} />)}</div>
@@ -951,6 +945,7 @@ function PanelStyles() {
       .markdot { position: absolute; top: -2px; right: -2px; width: 8px; height: 8px; border-radius: 50%; background: var(--olive); border: 1.5px solid var(--bg2); animation: anpulse 1.5s infinite; }
       .grow { flex: 1; }
       .mark.big { width: 46px; height: 46px; border-radius: 13px; margin-bottom: 14px; } .mark.big svg { width: 26px; height: 26px; }
+      .markimg { width: 64px; height: 64px; border-radius: 16px; margin-bottom: 14px; object-fit: cover; box-shadow: 0 1px 3px rgba(15,17,22,.14); }
       .brand { font-size: 14.5px; font-weight: 600; color: var(--ink); }
       .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted2); flex-shrink: 0; }
       .dot.ready { background: var(--good); } .dot.work { background: var(--olive); animation: anpulse 1.5s infinite; }
