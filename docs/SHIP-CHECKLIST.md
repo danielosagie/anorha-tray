@@ -10,7 +10,7 @@ sssync-bknd. What's left needs your accounts/dashboards or a real device test.
 |---|------|-------|-------------|
 | 1 | First launch → boots silent to tray | DONE | tsc; auto-show removed in main.ts |
 | 2 | Open tray → LinkGate (signed-out) | DONE | preview screenshot |
-| 3 | Link account (Clerk email → code OTP, same as mobile) | DONE | preview render; **live round-trip gated on Clerk dashboard** |
+| 3 | Link account (system browser + 127.0.0.1 loopback; no Clerk in renderer) | DONE | preview render; **needs hosted /desktop-callback page (docs/DESKTOP-CALLBACK-PAGE.md)** |
 | 4 | Grant Mac control (Accessibility / Screen Recording) | DONE | preview Settings screenshot (granted dots + Re-check) |
 | 5 | Sign in to selling channels (FB/eBay/Posh/Mercari/Google) | DONE | preview Settings screenshot |
 | 6 | Name + register this computer (`os.hostname()` default) | DONE | device.ts registerDevice; tests |
@@ -55,17 +55,17 @@ deploy-gated by design (below).
    `cd sssync-bknd && npx convex deploy` (targets merry-buffalo-800; your `.env.local`
    CLI default is a local backend). Review the uncommitted convex diff first, then
    commit. Linking/claiming fails at runtime until this is live.
-2. **Clerk dashboard** (prod instance clerk.app.anorha.app), two toggles:
-   - Add the desktop origin to **allowed origins** (the LinkGate runs Clerk in the
-     Electron renderer; prod keys reject unknown origins — this is the console error
-     you'll see otherwise).
-   - Enable **email-code** as a sign-in factor (the LinkGate uses `prepareFirstFactor`
-     `email_code`, same flow as mobile). No OAuth redirect needed.
-   Then one live round-trip to confirm link → register → claim.
-3. **Packaging + signing**: add electron-builder (appId, icon, hardened-runtime
-   entitlements + Accessibility/Screen-Recording usage strings), Developer-ID sign +
-   notarize (your Apple acct), Windows native input layer + cert, then DMG/installer
-   + auto-update.
+2. **Host the desktop-callback page** on `app.anorha.app` (sign-in is now
+   system-browser + 127.0.0.1 loopback — NO Clerk in the renderer, so no dashboard
+   origin/email-code changes needed). Drop in the ~30-line page from
+   `docs/DESKTOP-CALLBACK-PAGE.md` (Next.js App Router version provided). Sign-in
+   fails until this is live.
+3. **Packaging + signing** — SCAFFOLDED (`electron-builder.yml`,
+   `build/entitlements.mac.plist`, `electron-updater` wired, `dist:*` scripts; an
+   unsigned `npm run dist:dir` builds). Just add creds (see `docs/PACKAGING.md`):
+   Apple Developer ID + App Store Connect API key for mac notarize; Azure Trusted
+   Signing for Windows; drop `build/icon.icns`+`icon.ico`; set a real `version` +
+   the `publish` feed. `appId app.anorha.tray` — keep it stable forever.
 4. **Flip the cutover** after the tray ships: set `BROWSER_JOBS_REQUIRE_DEVICE=true`
    in the Convex env to close the legacy bare-`userId` queue path.
 

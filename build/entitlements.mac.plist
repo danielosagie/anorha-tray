@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Electron needs JIT + writable/executable JS memory under hardened runtime. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+
+  <!-- Deliberately NO com.apple.security.app-sandbox: the sandbox makes
+       AXIsProcessTrusted() always false and silently kills mouse/screen control.
+       Accessibility + Screen Recording are TCC runtime grants, not entitlements. -->
+
+  <!-- Uncomment ONLY if a native module (nut-js) trips library validation on a
+       clean Mac during notarization/launch:
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  -->
+</dict>
+</plist>

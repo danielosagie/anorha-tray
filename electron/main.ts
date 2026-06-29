@@ -47,6 +47,7 @@ import {
   type JobActivityEvent,
 } from "../src/agent/browser-jobs/index";
 import { linkViaBrowser } from "./clerk-link";
+import { autoUpdater } from "electron-updater";
 import type { RouterClient } from "../src/agent/router";
 import type { AgentEvents, ProviderName } from "../src/agent/types";
 import type { BrowserClient, BrowserSnapshot } from "../src/agent/browser/types";
@@ -3365,6 +3366,21 @@ if (!isPrimaryInstance) {
   });
 }
 
+// Silent auto-update for the packaged tray app. Dev runs have no feed, so this
+// is a no-op there. Downloads in the background and installs on quit; the long
+// re-check covers always-on tray sessions. Errors (e.g. feed not yet configured)
+// are swallowed so they never surface to the user.
+function maybeCheckForUpdates(): void {
+  if (!app.isPackaged) return;
+  autoUpdater.on("error", (e) => console.error("[updater]", e?.message || e));
+  try {
+    void autoUpdater.checkForUpdatesAndNotify();
+    setInterval(() => void autoUpdater.checkForUpdatesAndNotify(), 6 * 60 * 60 * 1000);
+  } catch (e) {
+    console.error("[updater] check failed:", e);
+  }
+}
+
 app.whenReady().then(() => {
   if (!isPrimaryInstance) return; // a duplicate launch already quit above
   // Keep dock visible during dev so the user has a visual anchor; can hide
@@ -3396,6 +3412,9 @@ app.whenReady().then(() => {
   // on demand (tray "Open", ⌘⇧H, or app:show), which creates it via
   // createAppWindowWired (wires warm-on-focus). Keep the background keep-warm tick.
   startKeepWarm();
+
+  // Silent background auto-update (packaged builds only; dev has no feed).
+  maybeCheckForUpdates();
 
   // Boot the Buddy overlay once at startup. It stays open for the whole
   // session — click-through, transparent, just hosts the cursor-following

@@ -1,0 +1,87 @@
+# electron-builder config for the Anorha tray app.
+# Build with: npm run dist:mac  /  npm run dist:win  (or dist:dir for an
+# unsigned local smoke test). Signing/notarize creds come from env (see
+# docs/PACKAGING.md). electron-vite emits to out/ first; this packages it.
+
+appId: app.anorha.tray            # KEEP THIS STABLE FOREVER — macOS TCC grants
+                                  # (Accessibility/Screen Recording) + auto-update
+                                  # identity both key off it.
+productName: Anorha
+copyright: Copyright © 2026 Anorha
+
+directories:
+  buildResources: build
+  output: release/${version}
+
+# Negative-glob list (electron-vite pattern): source is bundled into out/, so it
+# never ships; node_modules production deps are still included automatically.
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml,package-lock.json}'
+  - '!{tsconfig.json,tsconfig.*.json}'
+  - '!{bench,examples,docs,skills,convex,migrations}/**'
+  - '!{modal_app.py,modal_app_sglang.py}'
+  - '!tests/**'
+  - '!**/*.md'
+
+# Native modules can't run from inside the asar archive — unpack them, or the
+# app works in dev and crashes only after packaging.
+asarUnpack:
+  - '**/*.node'
+  - 'node_modules/@nut-tree-fork/**'
+  - 'node_modules/node-mac-permissions/**'
+npmRebuild: true
+
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip          # REQUIRED for electron-updater (latest-mac.yml points at the zip)
+      arch: [arm64, x64]
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  notarize: true           # uses notarytool; creds via env (APPLE_API_KEY etc.)
+  extendInfo:
+    # Screen Recording is a TCC grant, but modern macOS needs this string or the
+    # permission prompt is malformed and the app is killed on first capture.
+    NSScreenCaptureUsageDescription: "Anorha reads the screen so it can see and act on what's shown while running your commands."
+    # Menu-bar/tray app — no Dock icon.
+    LSUIElement: true
+    # NOTE: Accessibility (mouse control) needs NO entitlement and NO plist key —
+    # it's a pure TCC toggle granted at runtime. App Sandbox stays OFF (we add no
+    # com.apple.security.app-sandbox key) or AXIsProcessTrusted() is always false.
+
+dmg:
+  title: ${productName} ${version}
+
+win:
+  target:
+    - target: nsis
+      arch: [x64, arm64]
+  # Azure Trusted Signing (recommended, ~$10/mo) — uncomment + fill when ready.
+  # publisherName MUST equal the cert CommonName exactly or auto-update rejects.
+  # azureSignOptions:
+  #   publisherName: "Anorha"
+  #   endpoint: "https://eus.codesigning.azure.net/"
+  #   codeSigningAccountName: "<your-account>"
+  #   certificateProfileName: "<your-profile>"
+
+nsis:
+  oneClick: false
+  perMachine: false        # per-user install: no UAC, friendlier to auto-update
+  allowToChangeInstallationDirectory: true
+
+# Auto-update feed. GitHub Releases is simplest; or use a generic feed on your
+# own host. Fill in before relying on electron-updater.
+publish:
+  provider: github
+  owner: REPLACE_ME
+  repo: REPLACE_ME
+  # Or, instead of github:
+  # provider: generic
+  # url: https://updates.anorha.app
