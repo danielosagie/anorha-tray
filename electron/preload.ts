@@ -44,6 +44,7 @@ const api = {
       backgroundMode: boolean;
       clerkPublishableKey: string | null;
       apiBaseUrl: string | null;
+      webBaseUrl: string;
     }>,
   // ── Device linking (Phase 1) ──
   getDeviceStatus: () =>
@@ -55,6 +56,13 @@ const api = {
     }>,
   registerDevice: (args: { clerkToken: string; name: string; platform?: string }) =>
     ipcRenderer.invoke("device:register", args) as Promise<{
+      ok: boolean;
+      deviceId?: string;
+      error?: string;
+    }>,
+  // Sign in via the system browser; resolves once the device is linked.
+  linkViaBrowser: () =>
+    ipcRenderer.invoke("device:linkViaBrowser") as Promise<{
       ok: boolean;
       deviceId?: string;
       error?: string;

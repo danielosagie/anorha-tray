@@ -19,13 +19,14 @@ else localStorage.setItem("anorha_onboarded", "1");
 const sub = (_cb?: unknown) => () => {};
 
 (window as unknown as { agent: unknown }).agent = {
-  getEnv: async () => ({ convexUrl: "https://preview.convex.cloud", provider: "hcompany", backgroundMode: false, clerkPublishableKey: "pk_live_Y2xlcmsuYXBwLmFub3JoYS5hcHAk", apiBaseUrl: "https://api.sssync.app" }),
+  getEnv: async () => ({ convexUrl: "https://preview.convex.cloud", provider: "hcompany", backgroundMode: false, clerkPublishableKey: "pk_live_Y2xlcmsuYXBwLmFub3JoYS5hcHAk", apiBaseUrl: "https://api.sssync.app", webBaseUrl: "https://app.anorha.app" }),
   getDeviceStatus: async () => ({ linked, deviceId: "dev_preview", name: "This Mac", orgId: "org_preview" }),
   getState: async () => ({ warmup: "ready", provider: "hcompany", activeSessionId: null }),
   onState: sub,
   reprobePermissions: async () => ({ platform: "darwin", accessibility: "granted", screenRecording: "granted", inputMonitoring: "granted" }),
   listRecipes: async () => [],
   registerDevice: async () => ({ ok: true, deviceId: "dev_preview" }),
+  linkViaBrowser: async () => ({ ok: true, deviceId: "dev_preview" }),
   unlinkDevice: async () => ({ ok: true }),
   getRecentActivity: async () => ([
     { id: "j1", title: "Vintage Levi's 501 · $48", platform: "facebook_marketplace", status: "done", url: "https://example.com/l", ts: Date.now() - 120_000 },

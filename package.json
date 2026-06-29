@@ -60,7 +60,6 @@
     "bench:menu": "tsx bench/integration-fb-menu.ts"
   },
   "dependencies": {
-    "@clerk/clerk-react": "^5.61.8",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@nut-tree-fork/nut-js": "^4.2.2",
     "chalk": "^4.1.2",

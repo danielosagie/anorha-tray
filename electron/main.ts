@@ -46,6 +46,7 @@ import {
   type BrowserJobsConsumer,
   type JobActivityEvent,
 } from "../src/agent/browser-jobs/index";
+import { linkViaBrowser } from "./clerk-link";
 import type { RouterClient } from "../src/agent/router";
 import type { AgentEvents, ProviderName } from "../src/agent/types";
 import type { BrowserClient, BrowserSnapshot } from "../src/agent/browser/types";
@@ -2915,9 +2916,11 @@ function setupIpc(): void {
     convexUrl: convexUrl ?? null,
     provider: executorNameFor(providerName),
     backgroundMode: BACKGROUND_MODE,
-    // Surfaced for the renderer's Clerk sign-in (onboarding) + org lookup.
+    // Surfaced for diagnostics + org lookup. Sign-in itself happens in the
+    // system browser (device:linkViaBrowser), not in the renderer.
     clerkPublishableKey: process.env.CLERK_PUBLISHABLE_KEY ?? null,
     apiBaseUrl: process.env.PONDER_API_BASE_URL ?? null,
+    webBaseUrl: process.env.PONDER_WEB_BASE_URL ?? "https://app.anorha.app",
   }));
 
   // ── Device linking (Phase 1) — Clerk sign-in mints a per-device secret. ──
@@ -2940,45 +2943,66 @@ function setupIpc(): void {
   // then stream via agent:activity → preload onActivity).
   ipcMain.handle("activity:recent", () => recentActivity);
 
+  // Exchange a short-lived Clerk session token for the long-lived device
+  // credential: resolve the active org (same endpoint the mobile app uses),
+  // register on the queue's Convex deployment, persist ~/.ponder/device.json,
+  // and (re)start the consumer. Shared by the system-browser link flow.
+  const registerWithClerkToken = async (args: {
+    clerkToken: string;
+    name?: string;
+    platform?: string;
+  }): Promise<{ ok: boolean; deviceId?: string; error?: string }> => {
+    try {
+      const convexURL = process.env.VITE_CONVEX_URL || convexUrl || "";
+      if (!convexURL) return { ok: false, error: "no Convex URL configured" };
+      const apiBase = (process.env.PONDER_API_BASE_URL || "").replace(/\/+$/, "");
+      if (!apiBase) return { ok: false, error: "no API base configured" };
+      // Resolve the account's active org (returns { orgId }). registerDevice
+      // requires an explicit orgId.
+      const orgRes = await fetch(`${apiBase}/api/organizations/me/active`, {
+        headers: { Authorization: `Bearer ${args.clerkToken}` },
+      });
+      if (!orgRes.ok) return { ok: false, error: `org lookup failed (${orgRes.status})` };
+      const orgJson = (await orgRes.json()) as { orgId?: string };
+      const orgId = String(orgJson?.orgId || "").trim();
+      if (!orgId) return { ok: false, error: "no active org for this account" };
+      const cred = await registerBrowserJobsDevice({
+        convexURL,
+        clerkToken: args.clerkToken,
+        orgId,
+        name: (args.name && args.name.trim()) || os.hostname(),
+        platform: args.platform,
+      });
+      try {
+        browserJobsConsumer?.stop();
+      } catch {
+        /* ignore */
+      }
+      browserJobsConsumer = await startBrowserJobsConsumer({ events: consumerEvents() });
+      return { ok: true, deviceId: cred.deviceId };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  };
+
   ipcMain.handle(
     "device:register",
-    async (
-      _e,
-      args: { clerkToken: string; name: string; platform?: string },
-    ) => {
-      try {
-        const convexURL = process.env.VITE_CONVEX_URL || convexUrl || "";
-        if (!convexURL) return { ok: false, error: "no Convex URL configured" };
-        const apiBase = (process.env.PONDER_API_BASE_URL || "").replace(/\/+$/, "");
-        if (!apiBase) return { ok: false, error: "no API base configured" };
-        // Resolve the account's active org (same endpoint the mobile app uses;
-        // returns { orgId }). registerDevice requires an explicit orgId.
-        const orgRes = await fetch(`${apiBase}/api/organizations/me/active`, {
-          headers: { Authorization: `Bearer ${args.clerkToken}` },
-        });
-        if (!orgRes.ok) return { ok: false, error: `org lookup failed (${orgRes.status})` };
-        const orgJson = (await orgRes.json()) as { orgId?: string };
-        const orgId = String(orgJson?.orgId || "").trim();
-        if (!orgId) return { ok: false, error: "no active org for this account" };
-        const cred = await registerBrowserJobsDevice({
-          convexURL,
-          clerkToken: args.clerkToken,
-          orgId,
-          name: (args.name && args.name.trim()) || os.hostname(),
-          platform: args.platform,
-        });
-        try {
-          browserJobsConsumer?.stop();
-        } catch {
-          /* ignore */
-        }
-        browserJobsConsumer = await startBrowserJobsConsumer({ events: consumerEvents() });
-        return { ok: true, deviceId: cred.deviceId };
-      } catch (e) {
-        return { ok: false, error: e instanceof Error ? e.message : String(e) };
-      }
-    },
+    async (_e, args: { clerkToken: string; name: string; platform?: string }) =>
+      registerWithClerkToken(args),
   );
+
+  // Primary link path: sign in via the system browser, capture the session
+  // token over a one-shot 127.0.0.1 loopback, then register the device. No
+  // Clerk SDK runs in the renderer (its file:// origin can't talk to pk_live_).
+  ipcMain.handle("device:linkViaBrowser", async () => {
+    try {
+      const webBaseUrl = process.env.PONDER_WEB_BASE_URL || "https://app.anorha.app";
+      const { clerkToken } = await linkViaBrowser({ webBaseUrl });
+      return await registerWithClerkToken({ clerkToken });
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  });
 
   ipcMain.handle("device:unlink", async () => {
     const cred = loadDeviceCredential();
