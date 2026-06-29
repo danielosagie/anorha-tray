@@ -13,6 +13,7 @@ import {
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { execFile } from "node:child_process";
 import { join } from "node:path";
+import * as os from "node:os";
 import { config as loadDotenv } from "dotenv";
 import { ConvexHttpClient } from "convex/browser";
 import { api as convexApi } from "@convex/_generated/api";
@@ -2962,7 +2963,7 @@ function setupIpc(): void {
           convexURL,
           clerkToken: args.clerkToken,
           orgId,
-          name: args.name,
+          name: (args.name && args.name.trim()) || os.hostname(),
           platform: args.platform,
         });
         try {

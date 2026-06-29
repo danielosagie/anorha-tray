@@ -11,7 +11,8 @@
  * Everything runs through the EXISTING engine IPC (window.agent.*) on the
  * selected provider (default: the H Company API). No from-scratch loop.
  */
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type CSSProperties } from "react";
+import { useSignIn, useAuth } from "@clerk/clerk-react";
 import { useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
@@ -381,7 +382,60 @@ function LinkGate({
 }: {
   onLinked: (s: { linked: boolean; deviceId?: string; name?: string; orgId?: string }) => void;
 }) {
-  void onLinked; // wired once Clerk sign-in lands (STEP C)
+  const { isLoaded, signIn, setActive } = useSignIn();
+  const { getToken } = useAuth();
+  const [step, setStep] = useState<"email" | "code" | "linking">("email");
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const inputStyle: CSSProperties = {
+    width: 240, height: 40, marginTop: 12, padding: "0 12px", textAlign: "center",
+    fontSize: 14, borderRadius: 10, border: "1px solid rgba(15,17,22,.14)",
+    background: "#fff", color: "#131418", outline: "none",
+  };
+
+  const sendCode = async () => {
+    if (!isLoaded || !signIn || !email.trim()) return;
+    setErr(""); setBusy(true);
+    try {
+      const si = await signIn.create({ identifier: email.trim() });
+      const f = si.supportedFirstFactors?.find((x) => x.strategy === "email_code") as
+        | { strategy: "email_code"; emailAddressId: string } | undefined;
+      if (!f) throw new Error("Email-code sign-in isn't enabled for this account.");
+      await signIn.prepareFirstFactor({ strategy: "email_code", emailAddressId: f.emailAddressId });
+      setStep("code");
+    } catch (e) {
+      setErr(clerkErr(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const verify = async () => {
+    if (!isLoaded || !signIn || !code.trim()) return;
+    setErr(""); setBusy(true);
+    try {
+      const res = await signIn.attemptFirstFactor({ strategy: "email_code", code: code.trim() });
+      if (res.status !== "complete" || !res.createdSessionId) {
+        throw new Error("That code didn't work — try again.");
+      }
+      await setActive({ session: res.createdSessionId });
+      setStep("linking");
+      const token = await getToken(); // no template — matches web/mobile native-auth plain session
+      if (!token) throw new Error("Couldn't get a session token.");
+      const reg = await window.agent.registerDevice({ clerkToken: token, name: "" });
+      if (!reg.ok) throw new Error(reg.error || "Couldn't link this computer.");
+      onLinked(await window.agent.getDeviceStatus());
+    } catch (e) {
+      setErr(clerkErr(e));
+      setStep("code");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="onb">
       <span className="mark big" aria-hidden>
@@ -391,11 +445,35 @@ function LinkGate({
         </svg>
       </span>
       <h2>Link this computer</h2>
-      <p>Sign in to connect this Mac to your account. It then runs the commands you send.</p>
-      <button className="cta" disabled>Sign in</button>
-      <div className="gate-note">Sign-in lands in the next build.</div>
+      <p>{step === "code" ? `Enter the code sent to ${email}.` : "Sign in to connect this Mac. It runs the commands you send."}</p>
+
+      {step === "code" ? (
+        <input style={inputStyle} inputMode="numeric" placeholder="6-digit code" value={code} autoFocus
+          onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && verify()} />
+      ) : (
+        <input style={inputStyle} type="email" placeholder="you@email.com" value={email} autoFocus
+          onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && sendCode()} />
+      )}
+
+      {err && <div style={{ color: "#D8434F", fontSize: 12.5, marginTop: 8, maxWidth: 260 }}>{err}</div>}
+
+      <button className="cta" disabled={busy || !isLoaded || (step === "code" ? !code.trim() : !email.trim())}
+        onClick={step === "code" ? verify : sendCode}>
+        {step === "linking" ? "Linking…" : busy ? "…" : step === "code" ? "Verify & link" : "Send code"}
+      </button>
+
+      {step === "code" && (
+        <div className="gate-note" style={{ cursor: "pointer" }} onClick={() => { setStep("email"); setCode(""); setErr(""); }}>
+          Use a different email
+        </div>
+      )}
     </div>
   );
+}
+
+function clerkErr(e: unknown): string {
+  const x = e as { errors?: Array<{ longMessage?: string; message?: string }>; message?: string };
+  return x?.errors?.[0]?.longMessage || x?.errors?.[0]?.message || x?.message || "Something went wrong.";
 }
 
 // ── History (Convex sessions) ────────────────────────────────────────────────

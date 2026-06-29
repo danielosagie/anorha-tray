@@ -19,7 +19,7 @@ else localStorage.setItem("anorha_onboarded", "1");
 const sub = (_cb?: unknown) => () => {};
 
 (window as unknown as { agent: unknown }).agent = {
-  getEnv: async () => ({ convexUrl: "https://preview.convex.cloud", provider: "hcompany", backgroundMode: false, clerkPublishableKey: null, apiBaseUrl: null }),
+  getEnv: async () => ({ convexUrl: "https://preview.convex.cloud", provider: "hcompany", backgroundMode: false, clerkPublishableKey: "pk_live_Y2xlcmsuYXBwLmFub3JoYS5hcHAk", apiBaseUrl: "https://api.sssync.app" }),
   getDeviceStatus: async () => ({ linked, deviceId: "dev_preview", name: "This Mac", orgId: "org_preview" }),
   getState: async () => ({ warmup: "ready", provider: "hcompany", activeSessionId: null }),
   onState: sub,

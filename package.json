@@ -60,6 +60,7 @@
     "bench:menu": "tsx bench/integration-fb-menu.ts"
   },
   "dependencies": {
+    "@clerk/clerk-react": "^5.61.8",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@nut-tree-fork/nut-js": "^4.2.2",
     "chalk": "^4.1.2",
@@ -69,9 +70,9 @@
     "ink": "^3.2.0",
     "ink-gradient": "^2.0.0",
     "ink-spinner": "^4.0.3",
-    "ora": "^5.4.1",
     "node-mac-permissions": "^2.5.0",
     "ollama": "^0.5.10",
+    "ora": "^5.4.1",
     "playwright-core": "^1.49.0",
     "playwriter": "^0.1.0",
     "prompts": "^2.4.2",
