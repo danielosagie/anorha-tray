@@ -151,3 +151,76 @@ export async function revokeDeviceRemote(cred: DeviceCredential): Promise<void> 
     }
   }
 }
+
+// ── QR pairing (link from the phone) ─────────────────────────────────────────
+
+/** Short high-entropy code carried in the QR (>= 8 chars required by backend). */
+export function generatePairingCode(): string {
+  return crypto.randomBytes(8).toString("hex"); // 16 hex chars
+}
+
+export interface PairingHandle {
+  deviceId: string;
+  deviceSecret: string;
+  pairingCode: string;
+  convexURL: string;
+  expiresAt: number;
+}
+
+/**
+ * Start a QR pairing: generate the device secret + pairing code locally, register
+ * a PENDING device on the queue (no Clerk needed), and return the handle. The
+ * secret never leaves this machine; only the pairing code goes into the QR. Poll
+ * checkPairing until the phone claims it, then persist the credential.
+ */
+export async function createPairing(input: {
+  convexURL: string;
+  name?: string;
+  platform?: string;
+}): Promise<PairingHandle> {
+  const deviceSecret = generateDeviceToken();
+  const pairingCode = generatePairingCode();
+  const client: any = new ConvexClient(input.convexURL);
+  try {
+    const res = (await client.mutation("devices:createPairing", {
+      token: deviceSecret,
+      pairingCode,
+      name: input.name ?? "",
+      platform: input.platform ?? process.platform,
+    })) as { deviceId: string; expiresAt: number };
+    if (!res || !res.deviceId) throw new Error("createPairing returned no deviceId");
+    return {
+      deviceId: String(res.deviceId),
+      deviceSecret,
+      pairingCode,
+      convexURL: input.convexURL,
+      expiresAt: Number(res.expiresAt) || Date.now() + 5 * 60_000,
+    };
+  } finally {
+    try {
+      client.close();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/** Poll whether the phone has claimed the pairing yet. */
+export async function checkPairing(
+  h: PairingHandle,
+): Promise<{ linked: boolean; orgId: string }> {
+  const client: any = new ConvexClient(h.convexURL);
+  try {
+    const res = (await client.query("devices:pairingStatus", {
+      deviceId: h.deviceId,
+      deviceSecret: h.deviceSecret,
+    })) as { linked: boolean; orgId: string };
+    return { linked: !!res?.linked, orgId: String(res?.orgId || "") };
+  } finally {
+    try {
+      client.close();
+    } catch {
+      /* ignore */
+    }
+  }
+}

@@ -69,6 +69,22 @@ const api = {
     }>,
   // Abort an in-flight system-browser sign-in.
   linkCancel: () => ipcRenderer.invoke("device:linkCancel") as Promise<{ ok: boolean }>,
+  // QR pairing: start → returns a QR payload (pairing code); device:paired fires when the phone links it.
+  startPairing: () =>
+    ipcRenderer.invoke("device:startPairing") as Promise<{
+      ok: boolean;
+      pairingCode?: string;
+      qrPayload?: string;
+      qrDataUrl?: string;
+      expiresAt?: number;
+      error?: string;
+    }>,
+  cancelPairing: () => ipcRenderer.invoke("device:cancelPairing") as Promise<{ ok: boolean }>,
+  onPaired: (cb: () => void): (() => void) => {
+    const handler = () => cb();
+    ipcRenderer.on("device:paired", handler);
+    return () => ipcRenderer.removeListener("device:paired", handler);
+  },
   unlinkDevice: () =>
     ipcRenderer.invoke("device:unlink") as Promise<{ ok: boolean }>,
   // ── Tray Activity Feed (dispatched-job lifecycle) ──

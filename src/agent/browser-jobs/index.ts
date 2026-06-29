@@ -45,8 +45,12 @@ export {
   registerDevice,
   revokeDeviceRemote,
   deviceFilePath,
+  createPairing,
+  checkPairing,
+  generatePairingCode,
   type DeviceCredential,
   type RegisterDeviceInput,
+  type PairingHandle,
 } from "./device.js";
 
 export interface StartOptions {

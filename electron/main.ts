@@ -40,15 +40,20 @@ import { scrollToLoadAll } from "../src/agent/scroll-load";
 import {
   loadDeviceCredential,
   clearDeviceCredential,
+  saveDeviceCredential,
   startBrowserJobsConsumer,
   registerDevice as registerBrowserJobsDevice,
   revokeDeviceRemote,
+  createPairing,
+  checkPairing,
   type BrowserJobsConsumer,
   type JobActivityEvent,
+  type PairingHandle,
 } from "../src/agent/browser-jobs/index";
 import { linkViaBrowser, cancelActiveLink } from "./clerk-link";
 import { PUBLIC_CONFIG } from "./public-config";
 import { autoUpdater } from "electron-updater";
+import QRCode from "qrcode";
 import type { RouterClient } from "../src/agent/router";
 import type { AgentEvents, ProviderName } from "../src/agent/types";
 import type { BrowserClient, BrowserSnapshot } from "../src/agent/browser/types";
@@ -3019,6 +3024,74 @@ function setupIpc(): void {
   // Abort an in-flight system-browser sign-in (the LinkGate "Cancel" button).
   ipcMain.handle("device:linkCancel", () => {
     cancelActiveLink();
+    return { ok: true };
+  });
+
+  // ── QR pairing (link from the phone) ──
+  // startPairing registers a PENDING device + returns a QR payload (the pairing
+  // code). We poll until the phone claims it, then persist the credential, start
+  // the consumer, and tell the renderer (device:paired). The secret never leaves
+  // this machine — only the pairing code rides the QR.
+  let activePairing: { handle: PairingHandle; timer: ReturnType<typeof setInterval>; deadline: ReturnType<typeof setTimeout> } | null = null;
+  const stopPairing = () => {
+    if (!activePairing) return;
+    clearInterval(activePairing.timer);
+    clearTimeout(activePairing.deadline);
+    activePairing = null;
+  };
+  ipcMain.handle("device:startPairing", async () => {
+    stopPairing();
+    try {
+      const convexURL = process.env.VITE_CONVEX_URL || convexUrl || PUBLIC_CONFIG.convexUrl;
+      const webBaseUrl = (process.env.PONDER_WEB_BASE_URL || PUBLIC_CONFIG.webBaseUrl).replace(/\/+$/, "");
+      const handle = await createPairing({ convexURL, name: os.hostname() });
+      const timer = setInterval(() => {
+        void (async () => {
+          try {
+            const { linked, orgId } = await checkPairing(handle);
+            if (!linked) return;
+            stopPairing();
+            saveDeviceCredential({
+              deviceId: handle.deviceId,
+              deviceSecret: handle.deviceSecret,
+              convexURL,
+              orgId,
+              name: os.hostname(),
+              platform: process.platform,
+            });
+            try {
+              browserJobsConsumer?.stop();
+            } catch {
+              /* ignore */
+            }
+            startBrowserJobsConsumer({ events: consumerEvents() })
+              .then((c) => {
+                browserJobsConsumer = c;
+              })
+              .catch((e) => console.error("[browser-jobs] start after pairing failed:", e));
+            appWin?.webContents.send("device:paired", { ok: true, deviceId: handle.deviceId });
+          } catch {
+            /* transient — keep polling until the deadline */
+          }
+        })();
+      }, 2500);
+      const deadline = setTimeout(() => stopPairing(), Math.max(0, handle.expiresAt - Date.now()) + 2000);
+      activePairing = { handle, timer, deadline };
+      const qrPayload = `${webBaseUrl}/link?code=${handle.pairingCode}`;
+      const qrDataUrl = await QRCode.toDataURL(qrPayload, { margin: 1, width: 240 });
+      return {
+        ok: true,
+        pairingCode: handle.pairingCode,
+        qrPayload,
+        qrDataUrl,
+        expiresAt: handle.expiresAt,
+      };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  });
+  ipcMain.handle("device:cancelPairing", () => {
+    stopPairing();
     return { ok: true };
   });
 

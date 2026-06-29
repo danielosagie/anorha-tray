@@ -28,6 +28,16 @@ const sub = (_cb?: unknown) => () => {};
   registerDevice: async () => ({ ok: true, deviceId: "dev_preview" }),
   linkViaBrowser: async () => ({ ok: true, deviceId: "dev_preview" }),
   linkCancel: async () => ({ ok: true }),
+  startPairing: async () => ({
+    ok: true,
+    pairingCode: "demopair123456",
+    qrPayload: "https://app.anorha.app/link?code=demopair123456",
+    // tiny placeholder image so the QR view renders in the preview harness
+    qrDataUrl: "data:image/svg+xml;utf8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="#fff"/><rect x="20" y="20" width="160" height="160" fill="none" stroke="#111" stroke-width="6"/><text x="100" y="108" font-size="14" text-anchor="middle" fill="#111">QR</text></svg>'),
+    expiresAt: Date.now() + 300000,
+  }),
+  cancelPairing: async () => ({ ok: true }),
+  onPaired: (_cb: () => void) => () => {},
   unlinkDevice: async () => ({ ok: true }),
   getRecentActivity: async () => ([
     { id: "j1", title: "Vintage Levi's 501 · $48", platform: "facebook_marketplace", status: "done", url: "https://example.com/l", ts: Date.now() - 120_000 },

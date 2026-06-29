@@ -396,11 +396,12 @@ function actOutcome(s: Activity["status"]): string {
   return s === "done" ? "Done" : s === "failed" ? "Couldn't finish" : s === "running" ? "Running" : "Queued";
 }
 
-// ── Link gate (unlinked computer → sign in) ──────────────────────────────────
-// Sign-in runs in the SYSTEM browser, not here: the renderer's file:// origin
-// can't talk to a pk_live_ Clerk instance. The button opens the hosted sign-in
-// page; the session token comes back over a one-shot loopback in the main
-// process (device:linkViaBrowser), which then registers this computer.
+// ── Link gate (unlinked computer → sign in OR scan) ──────────────────────────
+// Two ways to link: (1) Sign in — opens hosted sign-in in the SYSTEM browser
+// (the renderer's file:// origin can't talk to a pk_live_ Clerk instance), token
+// returns over a loopback (device:linkViaBrowser). (2) Link with phone — the
+// tray shows a QR; the already-signed-in Anorha app scans it and the backend
+// links this computer under the same account (device:startPairing → device:paired).
 function LinkGate({
   onLinked,
 }: {
@@ -408,6 +409,8 @@ function LinkGate({
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [mode, setMode] = useState<"choose" | "qr">("choose");
+  const [qr, setQr] = useState<string | null>(null);
 
   const signIn = async () => {
     setErr(""); setBusy(true);
@@ -424,11 +427,40 @@ function LinkGate({
 
   const cancel = () => { void window.agent.linkCancel(); };
 
+  // QR pairing: generate a code on entering QR mode + listen for the phone link.
+  useEffect(() => {
+    if (mode !== "qr") return;
+    let cancelled = false;
+    setErr(""); setQr(null);
+    void window.agent.startPairing().then((r) => {
+      if (cancelled) return;
+      if (!r.ok || !r.qrDataUrl) { setErr(r.error || "Couldn't start pairing."); setMode("choose"); return; }
+      setQr(r.qrDataUrl);
+    });
+    const unsub = window.agent.onPaired(() => {
+      void window.agent.getDeviceStatus().then(onLinked);
+    });
+    return () => { cancelled = true; unsub(); void window.agent.cancelPairing(); };
+  }, [mode]);
+
+  if (mode === "qr") {
+    return (
+      <div className="onb">
+        <img className="markimg" src={anorhaIcon} alt="" aria-hidden />
+        <h2>Scan to link</h2>
+        <p>Open the Anorha app on your phone and scan this.</p>
+        {qr ? <img src={qr} alt="" className="qr" /> : <div className="qr qrload">Generating…</div>}
+        {err && <div style={{ color: "#D8434F", fontSize: 12.5, marginTop: 8, maxWidth: 260 }}>{err}</div>}
+        <div className="gate-note" style={{ cursor: "pointer" }} onClick={() => setMode("choose")}>Back</div>
+      </div>
+    );
+  }
+
   return (
     <div className="onb">
       <img className="markimg" src={anorhaIcon} alt="" aria-hidden />
       <h2>Link this computer</h2>
-      <p>{busy ? "Finish signing in in your browser." : "Sign in to connect this Mac. It runs the commands you send."}</p>
+      <p>{busy ? "Finish signing in in your browser." : "Connect this Mac so it can run what you send."}</p>
 
       {err && <div style={{ color: "#D8434F", fontSize: 12.5, marginTop: 8, maxWidth: 260 }}>{err}</div>}
 
@@ -436,10 +468,10 @@ function LinkGate({
         {busy ? "Waiting…" : "Sign in"}
       </button>
 
-      {busy && (
-        <div className="gate-note" style={{ cursor: "pointer" }} onClick={cancel}>
-          Cancel
-        </div>
+      {busy ? (
+        <div className="gate-note" style={{ cursor: "pointer" }} onClick={cancel}>Cancel</div>
+      ) : (
+        <button className="altcta" onClick={() => setMode("qr")}>Link with phone</button>
       )}
     </div>
   );
@@ -1017,6 +1049,9 @@ function PanelStyles() {
       .onb h2 { font-size: 19px; font-weight: 600; color: var(--ink); margin: 0; } .onb p { font-size: 13px; color: var(--muted); line-height: 1.55; margin: 10px 0 0; max-width: 300px; }
       .dots { display: flex; gap: 6px; margin: 20px 0 4px; } .dots span { width: 6px; height: 6px; border-radius: 50%; background: rgba(15,17,22,.15); } .dots span.on { background: var(--olive); width: 18px; border-radius: 3px; }
       .onb .cta { width: 240px; } .skip { margin-top: 8px; border: none; background: transparent; color: var(--muted2); font-size: 12px; cursor: pointer; }
+      .altcta { width: 240px; height: 42px; margin-top: 10px; border-radius: 13px; border: 1px solid rgba(15,17,22,.14); background: #fff; color: var(--ink); font-size: 13.5px; font-weight: 600; cursor: pointer; }
+      .qr { width: 200px; height: 200px; border-radius: 12px; margin: 6px 0 4px; background: #fff; }
+      .qrload { display: flex; align-items: center; justify-content: center; color: var(--muted2); font-size: 12px; border: 1px solid rgba(15,17,22,.10); }
       .foot { display: flex; align-items: center; gap: 6px; padding: 8px 10px 2px; font-size: 10.5px; color: var(--muted2); }
       .toast { position: absolute; bottom: 44px; left: 50%; transform: translateX(-50%); background: var(--ink); color: #fff; font-size: 12px; padding: 8px 14px; border-radius: 999px; box-shadow: 0 8px 24px rgba(15,17,22,.25); white-space: nowrap; }
       .prov-wrap { position: relative; }
