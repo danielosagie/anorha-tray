@@ -105,11 +105,22 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run release
 
-      - name: Promote release to latest
+      - name: Stable-named DMGs + promote release to latest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
+          version="$(node -p "require('./package.json').version")"
+          arm="release/Anorha-${version}-arm64.dmg"
+          x64="release/Anorha-${version}-x64.dmg"
+          if [[ ! -f "$arm" || ! -f "$x64" ]]; then
+            echo "::error::expected DMGs not found"; ls -la release/ || true; exit 1
+          fi
+          # Version-less copies so the web Download button has a STABLE URL
+          # (releases/latest/download/Anorha-arm64.dmg) across every release.
+          cp "$arm" release/Anorha-arm64.dmg
+          cp "$x64" release/Anorha-x64.dmg
+          gh release upload "${GITHUB_REF_NAME}" release/Anorha-arm64.dmg release/Anorha-x64.dmg --clobber --repo "$GITHUB_REPOSITORY"
           # electron-builder publishes a draft; promote it so releases/latest
           # serves both the download and the electron-updater feed.
           gh release edit "${GITHUB_REF_NAME}" --draft=false --latest --repo "$GITHUB_REPOSITORY"
